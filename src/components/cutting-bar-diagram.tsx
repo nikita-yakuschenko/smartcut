@@ -191,6 +191,7 @@ export function CuttingBarDiagram({
           <li
             key={`${displayIndex}-leg-${row.label}-${row.lengthMm}-${i}`}
             className="flex items-center gap-1.5"
+            title={`${row.label}: ${row.lengthMm} мм — ${row.count} шт.`}
           >
             <span
               className="inline-block size-1.5 shrink-0 rounded-sm"
@@ -198,9 +199,8 @@ export function CuttingBarDiagram({
                 background: PALETTE[row.colorIndex % PALETTE.length],
               }}
             />
-            <span className="text-foreground font-medium">{row.label}</span>
             <span className="tabular-nums text-foreground">
-              {row.lengthMm} × {row.count}
+              {row.lengthMm} мм × {row.count}
             </span>
           </li>
         ))}
