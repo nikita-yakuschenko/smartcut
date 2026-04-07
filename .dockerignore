@@ -1,0 +1,23 @@
+# deps
+node_modules
+npm-debug.log*
+
+# build / cache
+.next
+out
+dist
+build
+
+# git / ide
+.git
+.gitignore
+.cursor
+*.md
+!README.md
+
+# env (задавайте через compose / runtime)
+.env*.local
+
+# tests / misc
+coverage
+.turbo
