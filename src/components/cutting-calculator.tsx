@@ -1106,6 +1106,10 @@ export function CuttingCalculator() {
                 <TabsTrigger value="table">Сводка</TabsTrigger>
               </TabsList>
               <TabsContent value="diagrams" className="mt-4 space-y-3">
+                <p className="text-muted-foreground mb-1 text-xs leading-snug">
+                  Красный пунктир — центр пропила между деталями. Штриховка — остаток.
+                  Под полосой — накопленная длина от начала, мм.
+                </p>
                 {groupConsecutiveIdenticalBars(result.bars).map((g, idx) => (
                   <CuttingBarDiagram
                     key={`${g.startIndex}-${idx}`}
