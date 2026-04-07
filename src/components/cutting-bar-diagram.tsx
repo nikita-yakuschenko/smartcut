@@ -2,7 +2,7 @@
 
 import { Fragment } from "react";
 import { Badge } from "@/components/ui/badge";
-import type { BarLayout } from "@/lib/cutting";
+import type { BarLayout, PlacedPiece } from "@/lib/cutting";
 import { cumulativePositionsMm } from "@/lib/cutting";
 
 const PALETTE = [
@@ -15,6 +15,28 @@ const PALETTE = [
   "oklch(0.6 0.18 200)",
   "oklch(0.65 0.15 140)",
 ];
+
+/** Уникальные детали на заготовке: длина, подпись, цвет, число штук. */
+function aggregatePiecesForLegend(pieces: PlacedPiece[]) {
+  const map = new Map<
+    string,
+    { label: string; lengthMm: number; colorIndex: number; count: number }
+  >();
+  for (const p of pieces) {
+    const prev = map.get(p.demandId);
+    if (!prev) {
+      map.set(p.demandId, {
+        label: p.label,
+        lengthMm: p.lengthMm,
+        colorIndex: p.colorIndex,
+        count: 1,
+      });
+    } else {
+      prev.count += 1;
+    }
+  }
+  return [...map.values()].sort((a, b) => b.lengthMm - a.lengthMm);
+}
 
 function filterCumulativeLabels(
   values: number[],
@@ -78,6 +100,7 @@ export function CuttingBarDiagram({
       : `№ ${displayIndex}`;
 
   const cumShown = filterCumulativeLabels(cum, stockLengthMm, 0.045);
+  const legendRows = aggregatePiecesForLegend(bar.pieces);
 
   return (
     <div className="border-border/60 bg-card/30 w-full rounded-md border px-3 py-2">
@@ -115,7 +138,7 @@ export function CuttingBarDiagram({
                 >
                   {!isNarrow && (
                     <span className="text-[10px] leading-tight font-medium text-white tabular-nums [text-shadow:0_0_2px_rgba(0,0,0,0.65)]">
-                      {p.lengthMm} мм
+                      {p.lengthMm}
                     </span>
                   )}
                 </div>
@@ -158,22 +181,27 @@ export function CuttingBarDiagram({
               whiteSpace: "nowrap",
             }}
           >
-            {mm} мм
+            {mm}
           </span>
         ))}
       </div>
 
-      <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
-        {bar.pieces.map((p, i) => (
-          <li key={`${displayIndex}-leg-${i}`} className="flex items-center gap-1">
+      <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+        {legendRows.map((row, i) => (
+          <li
+            key={`${displayIndex}-leg-${row.label}-${row.lengthMm}-${i}`}
+            className="flex items-center gap-1.5"
+          >
             <span
               className="inline-block size-1.5 shrink-0 rounded-sm"
               style={{
-                background: PALETTE[p.colorIndex % PALETTE.length],
+                background: PALETTE[row.colorIndex % PALETTE.length],
               }}
             />
-            <span className="text-foreground">{p.label}</span>
-            <span className="tabular-nums">{p.lengthMm} мм</span>
+            <span className="text-foreground font-medium">{row.label}</span>
+            <span className="tabular-nums text-foreground">
+              {row.lengthMm} × {row.count}
+            </span>
           </li>
         ))}
       </ul>
