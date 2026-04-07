@@ -49,11 +49,11 @@ function parseNumberMaybe(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** мм → строка см для полей формы (1 см = 10 мм). */
-export function mmToCmInput(mm: number): string {
-  const cm = mm / 10;
-  if (Number.isInteger(cm)) return String(cm);
-  return String(Math.round(cm * 1000) / 1000).replace(/\.?0+$/, "");
+/** мм → строка для полей формы (все длины в интерфейсе — в мм). */
+export function formatMmForInput(mm: number): string {
+  const n = Math.round(mm);
+  if (Math.abs(mm - n) < 1e-6) return String(n);
+  return String(Math.round(mm * 100) / 100).replace(/\.?0+$/, "");
 }
 
 /**

@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import type { BarLayout } from "@/lib/cutting";
-import { segmentBoundariesMm } from "@/lib/cutting";
+import { cumulativePositionsMm, segmentBoundariesMm } from "@/lib/cutting";
 
 const PALETTE = [
   "var(--chart-1)",
@@ -17,22 +17,24 @@ const PALETTE = [
 
 type Props = {
   bar: BarLayout;
-  stockLengthMm: number;
   kerfMm: number;
-  barIndex: number;
-  showMm?: boolean;
+  /** с 1, для подписи «№» */
+  displayIndex: number;
+  /** одинаковых схем подряд */
+  repeat?: number;
 };
 
 export function CuttingBarDiagram({
   bar,
-  stockLengthMm,
   kerfMm,
-  barIndex,
-  showMm = true,
+  displayIndex,
+  repeat = 1,
 }: Props) {
+  const stockLengthMm = bar.stockLengthMm;
   const W = 100;
-  const H = 40;
+  const H = 22;
   const boundaries = segmentBoundariesMm(bar, kerfMm);
+  const cum = cumulativePositionsMm(bar, kerfMm);
 
   let posMm = 0;
   const rects: React.ReactNode[] = [];
@@ -40,16 +42,30 @@ export function CuttingBarDiagram({
     const fill = PALETTE[p.colorIndex % PALETTE.length];
     rects.push(
       <rect
-        key={`${barIndex}-${i}-${p.demandId}`}
+        key={`${displayIndex}-${i}-${p.demandId}`}
         x={(posMm * W) / stockLengthMm}
-        y={8}
+        y={4}
         width={(p.lengthMm * W) / stockLengthMm}
-        height={24}
+        height={12}
         fill={fill}
         stroke="var(--border)"
-        strokeWidth={0.35}
-        rx={2}
+        strokeWidth={0.2}
+        rx={1}
       />
+    );
+    const cx = posMm + p.lengthMm / 2;
+    const label = `${p.lengthMm} мм`;
+    rects.push(
+      <text
+        key={`t-${displayIndex}-${i}`}
+        x={(cx * W) / stockLengthMm}
+        y={12}
+        textAnchor="middle"
+        className="fill-foreground"
+        style={{ fontSize: "5px", fontWeight: 600 }}
+      >
+        {label}
+      </text>
     );
     posMm += p.lengthMm;
     if (i < bar.pieces.length - 1) posMm += kerfMm;
@@ -59,72 +75,85 @@ export function CuttingBarDiagram({
     <line
       key={`cut-${idx}`}
       x1={(posMmLine * W) / stockLengthMm}
-      y1={4}
+      y1={2}
       x2={(posMmLine * W) / stockLengthMm}
-      y2={H - 4}
+      y2={H - 2}
       stroke="var(--foreground)"
-      strokeWidth={1}
-      strokeDasharray="3 2"
-      opacity={0.85}
+      strokeWidth={0.6}
+      strokeDasharray="2 1"
+      opacity={0.75}
     />
   ));
 
+  const cumLabels = cum.map((mm, idx) => (
+    <text
+      key={`cum-${idx}`}
+      x={(mm * W) / stockLengthMm}
+      y={20}
+      textAnchor="middle"
+      className="fill-muted-foreground"
+      style={{ fontSize: "4.5px" }}
+    >
+      {mm} мм
+    </text>
+  ));
+
+  const rangeLabel =
+    repeat > 1
+      ? `№ ${displayIndex}–${displayIndex + repeat - 1}`
+      : `№ ${displayIndex}`;
+
   return (
-    <div className="bg-card/50 w-full space-y-3 rounded-xl border p-4 shadow-sm ring-1 ring-border/50">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary" className="tabular-nums">
-            № {barIndex + 1}
-          </Badge>
-          <span className="font-medium text-foreground">Заготовка</span>
-        </div>
+    <div className="border-border/60 bg-card/30 w-full rounded-lg border px-3 py-2">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        <Badge variant="secondary" className="h-5 px-1.5 font-mono text-[10px]">
+          {repeat}×
+        </Badge>
+        <span className="text-foreground font-medium tabular-nums">{rangeLabel}</span>
         <span className="tabular-nums">
-          Остаток {bar.wasteMm.toFixed(0)} мм · занято{" "}
-          {bar.usedMm.toFixed(0)} мм
+          {stockLengthMm} мм
+        </span>
+        <span className="ml-auto tabular-nums">
+          ост. {bar.wasteMm.toFixed(0)} · занято {bar.usedMm.toFixed(0)} мм
         </span>
       </div>
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        className="bg-muted/20 w-full h-auto rounded-lg border"
-        preserveAspectRatio="xMidYMid meet"
-        aria-label={`Схема раскроя заготовки ${barIndex + 1}`}
+        className="bg-muted/30 w-full max-h-[72px] rounded border"
+        preserveAspectRatio="none"
+        aria-label={`Схема раскроя ${rangeLabel}`}
       >
         <rect
           x={0}
-          y={6}
+          y={2}
           width={W}
-          height={28}
+          height={16}
           fill="var(--muted)"
           stroke="var(--border)"
-          strokeWidth={0.5}
-          rx={3}
+          strokeWidth={0.25}
+          rx={2}
         />
         {rects}
         {cutLines}
+        {cumLabels}
       </svg>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
         {bar.pieces.map((p, i) => (
-          <li key={`${barIndex}-legend-${i}`}>
+          <li key={`${displayIndex}-leg-${i}`} className="flex items-center gap-1">
             <span
-              className="mr-1 inline-block size-2 rounded-sm align-middle"
+              className="inline-block size-1.5 shrink-0 rounded-sm"
               style={{
                 background: PALETTE[p.colorIndex % PALETTE.length],
               }}
             />
             <span className="text-foreground">{p.label}</span>
-            {showMm ? (
-              <span> — {p.lengthMm} мм</span>
-            ) : (
-              <span>
-                {" "}
-                — {(p.lengthMm / 10).toFixed(1).replace(/\.0$/, "")} см
-              </span>
-            )}
+            <span className="tabular-nums">{p.lengthMm} мм</span>
           </li>
         ))}
       </ul>
-      <p className="text-muted-foreground text-[11px] leading-snug">
-        Пунктир — границы реза между деталями (пропил {kerfMm} мм).
+      <p className="text-muted-foreground mt-1 text-[10px] leading-tight">
+        Пунктир — рез между деталями, пропил {kerfMm} мм · внизу на шкале —
+        накопленная длина, мм
       </p>
     </div>
   );

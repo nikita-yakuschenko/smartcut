@@ -43,22 +43,27 @@ import {
   aggregateSegmentsByLength,
   EXAMPLE_BLANKS,
   EXAMPLE_SEGMENTS,
-  mmToCmInput,
+  formatMmForInput,
   parseBlanksPaste,
   parseSegmentsPaste,
   type ImportedSegment,
 } from "@/lib/import-parse";
+import { downloadCuttingPdf } from "@/lib/cutting-pdf";
 import {
   MAX_EXACT_PIECES,
-  solveCutting,
+  solveCuttingFromStocks,
+  STOCK_UNLIMITED,
   validateDemands,
+  groupConsecutiveIdenticalBars,
   type CuttingResult,
   type DemandItem,
+  type StockSpec,
 } from "@/lib/cutting";
 import {
   CheckCircle2,
   ChevronDown,
   CircleAlert,
+  FileDown,
   Info,
   ListPlus,
   Plus,
@@ -74,10 +79,18 @@ function newId() {
 type PieceRow = {
   id: string;
   label: string;
-  /** наружная длина, см */
-  outerCm: string;
-  /** внутренняя длина, см — опционально */
-  innerCm: string;
+  /** наружная длина, мм */
+  outerMm: string;
+  /** внутренняя длина, мм — опционально */
+  innerMm: string;
+  qty: string;
+};
+
+type StockRow = {
+  id: string;
+  /** длина заготовки, мм */
+  lengthMm: string;
+  /** пусто или ∞ — без лимита */
   qty: string;
 };
 
@@ -88,31 +101,35 @@ function parseNum(s: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** см → мм (1 см = 10 мм) */
-function cmToMm(cm: number): number {
-  return Math.round(cm * 10);
+/** Округление ввода длины до целых мм (как в импорте). */
+function parseLengthMm(s: string): number | null {
+  const n = parseNum(s);
+  if (n == null) return null;
+  return Math.round(n);
 }
 
 const defaultRows: PieceRow[] = [
   {
     id: newId(),
     label: "Тип A",
-    outerCm: "77",
-    innerCm: "",
+    outerMm: "770",
+    innerMm: "",
     qty: "1",
   },
   {
     id: newId(),
     label: "Тип B",
-    outerCm: "57",
-    innerCm: "",
+    outerMm: "570",
+    innerMm: "",
     qty: "1",
   },
 ];
 
 export function CuttingCalculator() {
   const [rows, setRows] = useState<PieceRow[]>(defaultRows);
-  const [stockCm, setStockCm] = useState("200");
+  const [stockRows, setStockRows] = useState<StockRow[]>([
+    { id: newId(), lengthMm: "6000", qty: "" },
+  ]);
   const [kerfMm, setKerfMm] = useState("0");
   const [applyMiterStock, setApplyMiterStock] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,24 +139,19 @@ export function CuttingCalculator() {
   const [importNotice, setImportNotice] = useState<string | null>(null);
 
   const miterInfo = useMemo(() => {
-    let maxDeltaCm = 0;
-    const perRow: { id: string; avgCm: number; deltaCm: number }[] = [];
+    let maxDeltaMm = 0;
+    const perRow: { id: string; avgMm: number; deltaMm: number }[] = [];
     for (const r of rows) {
-      const outer = parseNum(r.outerCm);
-      const inner = parseNum(r.innerCm);
+      const outer = parseLengthMm(r.outerMm);
+      const inner = parseLengthMm(r.innerMm);
       if (outer == null || inner == null || inner <= 0) continue;
-      const avgCm = (outer + inner) / 2;
-      const deltaCm = outer - avgCm;
-      maxDeltaCm = Math.max(maxDeltaCm, deltaCm);
-      perRow.push({ id: r.id, avgCm, deltaCm });
+      const avgMm = (outer + inner) / 2;
+      const deltaMm = outer - avgMm;
+      maxDeltaMm = Math.max(maxDeltaMm, deltaMm);
+      perRow.push({ id: r.id, avgMm, deltaMm });
     }
-    const stockCmNum = parseNum(stockCm);
-    const effectiveStockCm =
-      stockCmNum != null && applyMiterStock && maxDeltaCm > 0
-        ? stockCmNum - maxDeltaCm
-        : stockCmNum;
-    return { maxDeltaCm, perRow, effectiveStockCm };
-  }, [rows, stockCm, applyMiterStock]);
+    return { maxDeltaMm, perRow };
+  }, [rows]);
 
   const totalPieces = useMemo(() => {
     let s = 0;
@@ -158,8 +170,8 @@ export function CuttingCalculator() {
       {
         id: newId(),
         label: `Тип ${prev.length + 1}`,
-        outerCm: "",
-        innerCm: "",
+        outerMm: "",
+        innerMm: "",
         qty: "1",
       },
     ]);
@@ -179,11 +191,11 @@ export function CuttingCalculator() {
     const demands: DemandItem[] = [];
     let colorIndex = 0;
     for (const r of rows) {
-      const outer = parseNum(r.outerCm);
-      const inner = parseNum(r.innerCm);
+      const outer = parseLengthMm(r.outerMm);
+      const inner = parseLengthMm(r.innerMm);
       const q = parseNum(r.qty);
       if (outer == null || outer <= 0) {
-        return { demands: [], err: "Укажите положительную длину детали (см)." };
+        return { demands: [], err: "Укажите положительную длину детали (мм)." };
       }
       if (q == null || !Number.isInteger(q) || q < 1) {
         return {
@@ -193,10 +205,9 @@ export function CuttingCalculator() {
       }
       let lengthMm: number;
       if (inner != null && inner > 0) {
-        const avgCm = (outer + inner) / 2;
-        lengthMm = cmToMm(avgCm);
+        lengthMm = Math.round((outer + inner) / 2);
       } else {
-        lengthMm = cmToMm(outer);
+        lengthMm = outer;
       }
       demands.push({
         id: r.id,
@@ -207,6 +218,74 @@ export function CuttingCalculator() {
       });
     }
     return { demands, err: null };
+  }
+
+  function parseStockQty(raw: string): number {
+    const t = raw.trim();
+    if (t === "" || t === "∞") return STOCK_UNLIMITED;
+    const n = parseNum(t);
+    if (n == null || n < 0) return 0;
+    return Math.floor(n);
+  }
+
+  function buildStockSpecs(): { specs: StockSpec[]; err: string | null } {
+    if (stockRows.length === 0) {
+      return { specs: [], err: "Добавьте хотя бы одну строку заготовки." };
+    }
+    const specs: StockSpec[] = [];
+    for (let i = 0; i < stockRows.length; i++) {
+      const row = stockRows[i];
+      const mmLen = parseLengthMm(row.lengthMm);
+      if (mmLen == null || mmLen <= 0) {
+        return {
+          specs: [],
+          err: `Заготовка (строка ${i + 1}): укажите длину в мм.`,
+        };
+      }
+      let effMm = mmLen;
+      if (applyMiterStock && miterInfo.maxDeltaMm > 0) {
+        effMm = mmLen - miterInfo.maxDeltaMm;
+      }
+      if (effMm <= 0) {
+        return {
+          specs: [],
+          err:
+            "После коррекции по фаскам длина заготовки получается ≤ 0 — проверьте длины.",
+        };
+      }
+      const qty = parseStockQty(row.qty);
+      if (qty !== STOCK_UNLIMITED && (qty < 1 || !Number.isInteger(qty))) {
+        return {
+          specs: [],
+          err: `Количество заготовок (строка ${i + 1}): целое число ≥ 1 или пусто (∞).`,
+        };
+      }
+      specs.push({
+        id: row.id,
+        lengthMm: effMm,
+        quantity: qty,
+      });
+    }
+    return { specs, err: null };
+  }
+
+  function addStockRow() {
+    setStockRows((prev) => [
+      ...prev,
+      { id: newId(), lengthMm: "", qty: "" },
+    ]);
+  }
+
+  function removeStockRow(id: string) {
+    setStockRows((prev) =>
+      prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)
+    );
+  }
+
+  function updateStockRow(id: string, patch: Partial<StockRow>) {
+    setStockRows((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...patch } : r))
+    );
   }
 
   function handleImportBlanks() {
@@ -222,17 +301,17 @@ export function CuttingCalculator() {
       );
       return;
     }
-    const first = parsed[0];
-    setStockCm(mmToCmInput(first.lengthMm));
     const uniq = [...new Set(parsed.map((r) => r.lengthMm))];
+    setStockRows(
+      parsed.map((p) => ({
+        id: newId(),
+        lengthMm: formatMmForInput(p.lengthMm),
+        qty: p.quantity === "infinity" ? "" : String(p.quantity),
+      }))
+    );
     const parts = [
-      `Импортировано заготовок: ${parsed.length}. Для расчёта задана длина: ${mmToCmInput(first.lengthMm)} см (${first.lengthMm} мм).`,
+      `Импортировано типов заготовок: ${parsed.length} (${uniq.map((m) => `${m} мм`).join(", ")}).`,
     ];
-    if (uniq.length > 1) {
-      parts.push(
-        `На складе указано несколько длин (${uniq.map((m) => `${m} мм`).join(", ")}). Сейчас раскрой считается для одной заготовки — взята первая строка вставки.`
-      );
-    }
     if (errors.length > 0) {
       parts.push(`Предупреждения: ${errors.slice(0, 3).join(" ")}`);
     }
@@ -257,15 +336,15 @@ export function CuttingCalculator() {
     const next: PieceRow[] = aggregated.map((r) => ({
       id: newId(),
       label: r.name.trim() || `${r.lengthMm} мм`,
-      outerCm: mmToCmInput(r.lengthMm),
-      innerCm: "",
+      outerMm: formatMmForInput(r.lengthMm),
+      innerMm: "",
       qty: String(r.quantity),
     }));
     setRows(next);
     const raw = parsed.length;
     const uniq = aggregated.length;
     const parts = [
-      `${sourceLabel}: строк в списке ${raw}, уникальных длин ${uniq}. Одинаковые длины объединены, количества просуммированы. В таблице длины в см (из мм).`,
+      `${sourceLabel}: строк в списке ${raw}, уникальных длин ${uniq}. Одинаковые длины объединены, количества просуммированы. В таблице длины в мм.`,
     ];
     if (uniq < raw) {
       parts.push(
@@ -347,29 +426,29 @@ export function CuttingCalculator() {
       setError(err);
       return;
     }
-    const stockCmNum = parseNum(stockCm);
-    const kerf = parseNum(kerfMm);
-    if (stockCmNum == null || stockCmNum <= 0) {
-      setError("Укажите длину заготовки (см).");
+    const { specs, err: stockErr } = buildStockSpecs();
+    if (stockErr) {
+      setError(stockErr);
       return;
     }
+    const kerf = parseNum(kerfMm);
     if (kerf == null || kerf < 0) {
       setError("Ширина реза (пропил) должна быть числом ≥ 0.");
       return;
     }
 
-    let stockMm = cmToMm(stockCmNum);
-    if (applyMiterStock && miterInfo.maxDeltaCm > 0) {
-      stockMm = cmToMm(stockCmNum - miterInfo.maxDeltaCm);
-    }
-
-    const v = validateDemands(stockMm, demands);
+    const maxStock = Math.max(...specs.map((s) => s.lengthMm));
+    const v = validateDemands(maxStock, demands);
     if (v) {
       setError(v);
       return;
     }
 
-    setResult(solveCutting(stockMm, kerf, demands));
+    try {
+      setResult(solveCuttingFromStocks(specs, kerf, demands));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка расчёта раскроя.");
+    }
   }
 
   return (
@@ -403,9 +482,9 @@ export function CuttingCalculator() {
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs" side="bottom">
-                  При суммарном числе деталей не больше {MAX_EXACT_PIECES}{" "}
-                  подбирается минимальное число заготовок; иначе — быстрая
-                  эвристика FFD.
+                  При одной длине заготовки и не больше {MAX_EXACT_PIECES}{" "}
+                  деталей — точный минимум числа заготовок. Иначе — FFD. Несколько
+                  длин заготовок всегда считаются эвристикой FFD.
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -595,7 +674,7 @@ export function CuttingCalculator() {
             <div className="space-y-1.5">
               <CardTitle className="text-lg">Исходные данные</CardTitle>
               <CardDescription>
-                Длины деталей и заготовки — в сантиметрах. Наружная и внутренняя
+                Длины деталей и заготовок — в миллиметрах. Наружная и внутренняя
                 длина под углом: в расчёт входит{" "}
                 <strong>средняя</strong> длина.
               </CardDescription>
@@ -614,60 +693,122 @@ export function CuttingCalculator() {
                   aria-label="Про единицы"
                 >
                   <Badge variant="outline" className="cursor-help font-normal">
-                    см / мм
+                    мм
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs" side="left">
-                  В таблице ниже длины в сантиметрах (1 см = 10 мм). Пропил
-                  задаётся в миллиметрах.
+                  Все длины в таблице и пропил задаются в миллиметрах.
                 </TooltipContent>
               </Tooltip>
             </CardAction>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="stock">Длина одной заготовки</Label>
-                  <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal">
-                    см
-                  </Badge>
-                  <HintTip label="Длина заготовки">
-                    Укажите длину в сантиметрах: например 600 — это 6 м, 198 —
-                    1,98 м.
-                  </HintTip>
-                </div>
-                <Input
-                  id="stock"
-                  inputMode="decimal"
-                  value={stockCm}
-                  onChange={(e) => setStockCm(e.target.value)}
-                  placeholder="например 200"
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="kerf">Пропил</Label>
-                  <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Label className="text-base">Заготовки (склад)</Label>
+                  <Badge variant="outline" className="font-normal">
                     мм
                   </Badge>
-                  <HintTip label="Что такое пропил">
-                    Ширина реза между соседними деталями на одной заготовке;
-                    материал снимается при каждом пропиле. Для расчёта без потерь
-                    на рез укажите 0.
+                  <HintTip label="Несколько длин">
+                    Каждая строка — свой тип заготовки. Количество пустое или ∞
+                    — без лимита на складе. Алгоритм выберет наименьшую
+                    подходящую длину для новой заготовки.
                   </HintTip>
                 </div>
-                <Input
-                  id="kerf"
-                  inputMode="decimal"
-                  value={kerfMm}
-                  onChange={(e) => setKerfMm(e.target.value)}
-                  placeholder="0"
-                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addStockRow}
+                >
+                  <Plus className="mr-1 size-4" />
+                  Тип заготовки
+                </Button>
               </div>
+              <ScrollArea className="w-full rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Длина (мм)</TableHead>
+                      <TableHead className="min-w-[100px]">
+                        <span className="inline-flex items-center gap-1">
+                          Кол-во
+                          <HintTip label="Остаток на складе" side="bottom">
+                            Целое число штук. Пусто — неограниченно для расчёта.
+                          </HintTip>
+                        </span>
+                      </TableHead>
+                      <TableHead className="w-12" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stockRows.map((sr) => (
+                      <TableRow key={sr.id}>
+                        <TableCell>
+                          <Input
+                            inputMode="decimal"
+                            placeholder="6000"
+                            value={sr.lengthMm}
+                            onChange={(e) =>
+                              updateStockRow(sr.id, { lengthMm: e.target.value })
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            inputMode="numeric"
+                            placeholder="∞"
+                            value={sr.qty}
+                            onChange={(e) =>
+                              updateStockRow(sr.id, { qty: e.target.value })
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground"
+                            disabled={stockRows.length <= 1}
+                            onClick={() => removeStockRow(sr.id)}
+                            aria-label="Удалить строку заготовки"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
             </div>
 
-            {miterInfo.maxDeltaCm > 0 && (
+            <div className="max-w-md space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="kerf">Пропил</Label>
+                <Badge
+                  variant="outline"
+                  className="h-5 px-1.5 text-[10px] font-normal"
+                >
+                  мм
+                </Badge>
+                <HintTip label="Что такое пропил">
+                  Ширина реза между соседними деталями на одной заготовке.
+                  Для расчёта без потерь на рез укажите 0.
+                </HintTip>
+              </div>
+              <Input
+                id="kerf"
+                inputMode="decimal"
+                value={kerfMm}
+                onChange={(e) => setKerfMm(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+
+            {miterInfo.maxDeltaMm > 0 && (
               <div className="bg-muted/40 flex items-start gap-3 rounded-lg border p-4">
                 <Checkbox
                   id="miter-stock"
@@ -680,15 +821,12 @@ export function CuttingCalculator() {
                     htmlFor="miter-stock"
                     className="cursor-pointer text-sm leading-none font-medium"
                   >
-                    Укоротить заготовку на max (наружная − средняя)
+                    Укоротить каждую заготовку на max (наружная − средняя)
                   </Label>
                   <p className="text-muted-foreground text-sm leading-relaxed">
-                    Эффективная длина ≈{" "}
-                    {miterInfo.effectiveStockCm != null
-                      ? `${miterInfo.effectiveStockCm.toFixed(2)} см`
-                      : "—"}{" "}
-                    (исходная {stockCm} см − {miterInfo.maxDeltaCm.toFixed(2)} см).
-                    Подходит для косых резов с одинаковым углом.
+                    Ко всем строкам заготовок вычитается{" "}
+                    {miterInfo.maxDeltaMm.toFixed(0)} мм (косой рез с одинаковым
+                    углом у деталей).
                   </p>
                 </div>
               </div>
@@ -701,10 +839,10 @@ export function CuttingCalculator() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Label className="text-base">Детали</Label>
                   <Badge variant="outline" className="font-normal">
-                    см
+                    мм
                   </Badge>
                   <HintTip label="Таблица деталей">
-                    Каждая строка — тип детали: длина в см и количество штук.
+                    Каждая строка — тип детали: длина в мм и количество штук.
                     Внутренняя длина — для фасок; иначе оставьте пустым.
                   </HintTip>
                 </div>
@@ -721,7 +859,7 @@ export function CuttingCalculator() {
                       <TableHead className="w-[min(140px,28vw)]">Название</TableHead>
                       <TableHead>
                         <span className="inline-flex items-center gap-1">
-                          Наруж. (см)
+                          Наруж. (мм)
                           <HintTip label="Наружняя длина детали после реза" side="bottom">
                             Длина по внешней стороне; при фаске заполните также
                             «Внутр.».
@@ -730,7 +868,7 @@ export function CuttingCalculator() {
                       </TableHead>
                       <TableHead>
                         <span className="inline-flex items-center gap-1">
-                          Внутр. (см)
+                          Внутр. (мм)
                           <HintTip label="Внутренняя длина" side="bottom">
                             Необязательно. Если указано вместе с наружней, в
                             расчёт идёт средняя длина.
@@ -762,9 +900,9 @@ export function CuttingCalculator() {
                         <TableCell>
                           <Input
                             inputMode="decimal"
-                            value={r.outerCm}
+                            value={r.outerMm}
                             onChange={(e) =>
-                              updateRow(r.id, { outerCm: e.target.value })
+                              updateRow(r.id, { outerMm: e.target.value })
                             }
                           />
                         </TableCell>
@@ -772,9 +910,9 @@ export function CuttingCalculator() {
                           <Input
                             inputMode="decimal"
                             placeholder="—"
-                            value={r.innerCm}
+                            value={r.innerMm}
                             onChange={(e) =>
-                              updateRow(r.id, { innerCm: e.target.value })
+                              updateRow(r.id, { innerMm: e.target.value })
                             }
                           />
                         </TableCell>
@@ -858,7 +996,7 @@ export function CuttingCalculator() {
                   </strong>
                 </div>
                 <p>
-                  Обе длины — в расчёт средняя; коррекция заготовки по max
+                  Обе длины в мм — в расчёт средняя; коррекция заготовки по max
                   (наружняя − средняя).
                 </p>
               </div>
@@ -873,8 +1011,8 @@ export function CuttingCalculator() {
                   </strong>
                 </div>
                 <p>
-                  До {MAX_EXACT_PIECES} деталей суммарно — точный перебор;
-                  больше — эвристика FFD.
+                  Одна длина заготовки и до {MAX_EXACT_PIECES} деталей — точный
+                  перебор. Несколько длин заготовок — всегда FFD.
                 </p>
               </div>
             </CardContent>
@@ -904,9 +1042,15 @@ export function CuttingCalculator() {
                 <span className="text-foreground font-medium tabular-nums">
                   {result.bars.length}
                 </span>
-                . Полезный метраж:{" "}
-                {(result.totalUsefulMm / 1000).toFixed(2)} м из{" "}
-                {(result.totalStockMm / 1000).toFixed(2)} м.
+                . Полезная длина:{" "}
+                <span className="text-foreground font-medium tabular-nums">
+                  {Math.round(result.totalUsefulMm).toLocaleString("ru-RU")} мм
+                </span>{" "}
+                из{" "}
+                <span className="text-foreground font-medium tabular-nums">
+                  {Math.round(result.totalStockMm).toLocaleString("ru-RU")} мм
+                </span>
+                . Резов: {result.totalCuts}.
               </CardDescription>
             </div>
             <CardAction className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-[200px] sm:items-end">
@@ -929,26 +1073,46 @@ export function CuttingCalculator() {
                 <Badge variant="secondary" className="font-normal tabular-nums">
                   Пропил {result.kerfMm} мм
                 </Badge>
-                <Badge variant="outline" className="font-normal tabular-nums">
-                  Заготовка {(result.stockLengthMm / 1000).toFixed(3)} м
-                </Badge>
+                {result.multiStock ? (
+                  <Badge variant="outline" className="font-normal">
+                    Несколько длин заготовок
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="font-normal tabular-nums">
+                    Заготовка{" "}
+                    {(result.bars[0]?.stockLengthMm ?? 0).toLocaleString("ru-RU")}{" "}
+                    мм
+                  </Badge>
+                )}
               </div>
             </CardAction>
           </CardHeader>
           <CardContent className="pt-6">
+            <div className="mb-4 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="gap-2"
+                onClick={() => downloadCuttingPdf(result)}
+              >
+                <FileDown className="size-4" />
+                Скачать PDF
+              </Button>
+            </div>
             <Tabs defaultValue="diagrams" className="gap-4">
               <TabsList className="grid h-9 w-full max-w-md grid-cols-2">
                 <TabsTrigger value="diagrams">Схемы</TabsTrigger>
                 <TabsTrigger value="table">Сводка</TabsTrigger>
               </TabsList>
-              <TabsContent value="diagrams" className="mt-4 space-y-8">
-                {result.bars.map((bar, i) => (
+              <TabsContent value="diagrams" className="mt-4 space-y-3">
+                {groupConsecutiveIdenticalBars(result.bars).map((g, idx) => (
                   <CuttingBarDiagram
-                    key={i}
-                    bar={bar}
-                    stockLengthMm={result.stockLengthMm}
+                    key={`${g.startIndex}-${idx}`}
+                    bar={g.bar}
                     kerfMm={result.kerfMm}
-                    barIndex={i}
+                    displayIndex={g.startIndex + 1}
+                    repeat={g.count}
                   />
                 ))}
               </TabsContent>
@@ -956,7 +1120,8 @@ export function CuttingCalculator() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>№ заготовки</TableHead>
+                      <TableHead>№</TableHead>
+                      <TableHead>Длина заготовки, мм</TableHead>
                       <TableHead>Детали по порядку</TableHead>
                       <TableHead className="text-right">Остаток, мм</TableHead>
                     </TableRow>
@@ -965,6 +1130,9 @@ export function CuttingCalculator() {
                     {result.bars.map((bar, i) => (
                       <TableRow key={i}>
                         <TableCell>{i + 1}</TableCell>
+                        <TableCell className="tabular-nums">
+                          {bar.stockLengthMm}
+                        </TableCell>
                         <TableCell>
                           {bar.pieces.map((p) => p.label).join(" → ")}
                         </TableCell>
