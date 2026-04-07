@@ -81,12 +81,46 @@ function filterLeadersByGap(
   return out;
 }
 
+/** Близкие по горизонтали выноски — на разной высоте (чередование), чтобы не перекрывали текст. */
+function staggerLeaders(
+  items: { centerMm: number; valueMm: number }[],
+  stockLengthMm: number
+): { centerMm: number; valueMm: number; lane: 0 | 1 }[] {
+  if (items.length === 0 || stockLengthMm <= 0) return [];
+  const sorted = [...items].sort((a, b) => a.centerMm - b.centerMm);
+  const proximityMm = Math.max(150, stockLengthMm * 0.035);
+  const out: { centerMm: number; valueMm: number; lane: 0 | 1 }[] = [];
+  let prevLane: 0 | 1 = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const it = sorted[i];
+    let lane: 0 | 1 = 0;
+    if (i > 0) {
+      const gapMm = it.centerMm - sorted[i - 1].centerMm;
+      if (gapMm < proximityMm) {
+        lane = prevLane === 0 ? 1 : 0;
+      }
+    }
+    prevLane = lane;
+    out.push({ ...it, lane });
+  }
+  return out;
+}
+
 type Props = {
   bar: BarLayout;
   kerfMm: number;
   displayIndex: number;
   repeat?: number;
 };
+
+/** Проверка, поместится ли число длины внутрь сегмента (приближенно, без замеров DOM). */
+function canShowPieceValue(lengthMm: number, stockLengthMm: number): boolean {
+  if (stockLengthMm <= 0) return false;
+  const digits = String(Math.round(lengthMm)).length;
+  // Базовый "бюджет" ширины + надбавка на каждую цифру.
+  const minFrac = 0.016 + digits * 0.0025;
+  return lengthMm / stockLengthMm >= minFrac;
+}
 
 function KerfSlot({ kerfMm }: { kerfMm: number }) {
   return (
@@ -104,20 +138,26 @@ function KerfSlot({ kerfMm }: { kerfMm: number }) {
 }
 
 /** Число без «мм» + красная линия со стрелкой к линии реза (правый край выноски = разрез). */
+const LEADER_LANE_OFFSET_PX = 22;
+
 function DimensionLeader({
   valueRounded,
   leftPct,
+  lane,
 }: {
   valueRounded: number;
   leftPct: number;
+  lane: 0 | 1;
 }) {
   return (
     <div
-      className="pointer-events-none absolute bottom-0 flex flex-col items-end"
+      className="pointer-events-none absolute flex flex-col items-end"
       style={{
         left: `${leftPct}%`,
+        bottom: lane === 0 ? 0 : LEADER_LANE_OFFSET_PX,
         transform: "translateX(-100%)",
         width: "max-content",
+        zIndex: lane === 1 ? 2 : 1,
       }}
     >
       <span className="text-foreground mb-0.5 pr-0.5 text-[10px] leading-none font-medium tabular-nums">
@@ -159,7 +199,12 @@ export function CuttingBarDiagram({
       : `№ ${displayIndex}`;
 
   const leadersRaw = cutCenterLeaders(bar, kerfMm);
-  const leaders = filterLeadersByGap(leadersRaw, stockLengthMm, 0.045);
+  const leadersFiltered = filterLeadersByGap(
+    leadersRaw,
+    stockLengthMm,
+    0.045
+  );
+  const leaders = staggerLeaders(leadersFiltered, stockLengthMm);
   const legendRows = aggregatePiecesForLegend(bar.pieces);
 
   return (
@@ -179,7 +224,7 @@ export function CuttingBarDiagram({
         {bar.pieces.map((p, i) => {
           const isFirst = i === 0;
           const isLastPiece = i === bar.pieces.length - 1;
-          const isNarrow = p.lengthMm / stockLengthMm < 0.06;
+          const showValue = canShowPieceValue(p.lengthMm, stockLengthMm);
           const roundL = isFirst ? "rounded-l-[3px]" : "";
           const roundR =
             isLastPiece && wasteMm <= 0 ? "rounded-r-[3px]" : "";
@@ -192,10 +237,10 @@ export function CuttingBarDiagram({
                 title={`${p.label}: ${p.lengthMm} мм`}
               >
                 <div
-                  className="flex min-h-[32px] flex-1 items-center justify-center px-0.5 text-center"
+                  className="flex min-h-[32px] flex-1 items-center justify-center px-px text-center"
                   style={{ background: PALETTE[p.colorIndex % PALETTE.length] }}
                 >
-                  {!isNarrow && (
+                  {showValue && (
                     <span className="text-[10px] leading-tight font-medium text-white tabular-nums [text-shadow:0_0_2px_rgba(0,0,0,0.65)]">
                       {p.lengthMm}
                     </span>
@@ -226,13 +271,17 @@ export function CuttingBarDiagram({
         )}
       </div>
 
-      {/* Выноски: число, красная линия, стрелка к вертикали реза */}
-      <div className="relative mt-0 h-[42px] w-full">
+      {/* Выноски: число, красная линия, стрелка; близкие — на разной высоте */}
+      <div
+        className="relative mt-0 w-full"
+        style={{ minHeight: 42 + LEADER_LANE_OFFSET_PX }}
+      >
         {leaders.map((L, idx) => (
           <DimensionLeader
             key={`${displayIndex}-ld-${idx}-${L.centerMm}`}
             valueRounded={Math.round(L.valueMm)}
             leftPct={(L.centerMm / stockLengthMm) * 100}
+            lane={L.lane}
           />
         ))}
       </div>
