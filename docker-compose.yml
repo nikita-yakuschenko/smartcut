@@ -1,12 +1,27 @@
-# Снаружи по умолчанию 3001 (часто 3000 на сервере занят). Внутри контейнера — 3000.
-# Переопределить: HOST_PORT=8080
+# Приложение слушает :3000 только внутри Docker-сети — Traefik (Dokploy) сам проксирует по домену.
+# Публикация на хост (0.0.0.0:3001) не нужна и мешает тому же паттерну, что у module-team-site и др.
+# Проверка с сервера: curl -H "Host: smartcut.module.team" http://127.0.0.1 (через Traefik) или docker exec … curl localhost:3000
 services:
   smartcut:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "${HOST_PORT:-3001}:3000"
+    expose:
+      - "3000"
     environment:
       NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    healthcheck:
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
     restart: unless-stopped
