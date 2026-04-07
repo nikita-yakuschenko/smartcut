@@ -123,22 +123,26 @@ function parseLengthMm(s: string): number | null {
   return Math.round(n);
 }
 
-const defaultRows: PieceRow[] = [
-  {
-    id: newId(),
-    label: "Тип A",
-    outerMm: "770",
-    innerMm: "",
-    qty: "1",
-  },
-  {
-    id: newId(),
-    label: "Тип B",
-    outerMm: "570",
-    innerMm: "",
-    qty: "1",
-  },
-];
+function buildDefaultPieceRows(): PieceRow[] {
+  return [
+    {
+      id: newId(),
+      label: "Тип A",
+      outerMm: "770",
+      innerMm: "",
+      qty: "1",
+    },
+    {
+      id: newId(),
+      label: "Тип B",
+      outerMm: "570",
+      innerMm: "",
+      qty: "1",
+    },
+  ];
+}
+
+const defaultRows: PieceRow[] = buildDefaultPieceRows();
 
 const APP_STATE_STORAGE_KEY = "smartcut-app-state-v1";
 const APP_STATE_VERSION = 1;
@@ -608,6 +612,24 @@ export function CuttingCalculator() {
     reader.readAsText(file);
   }
 
+  function handleNewCalculation() {
+    try {
+      localStorage.removeItem(APP_STATE_STORAGE_KEY);
+    } catch {
+      // режим без хранилища
+    }
+    setRows(buildDefaultPieceRows());
+    setStockRows([{ id: newId(), lengthMm: "6000", qty: "" }]);
+    setKerfMm("0");
+    setApplyMiterStock(true);
+    setError(null);
+    setResult(null);
+    setImportBlankText("");
+    setImportSegmentText("");
+    setImportNotice(null);
+    setMainTab("map");
+  }
+
   async function handleSegmentsExcelFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -685,8 +707,19 @@ export function CuttingCalculator() {
           className="top-0 border-r border-sidebar-border"
         >
           <SidebarHeader>
-            <div className="px-2 py-1 text-base font-semibold tracking-tight">
-              Исходные параметры
+            <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+              <span className="min-w-0 text-base font-semibold tracking-tight">
+                Исходные параметры
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0 text-xs font-normal"
+                onClick={handleNewCalculation}
+              >
+                Новый расчёт
+              </Button>
             </div>
           </SidebarHeader>
           <SidebarContent className="gap-1 p-2">

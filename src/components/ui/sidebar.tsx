@@ -169,7 +169,7 @@ function Sidebar({
       <div
         data-slot="sidebar"
         className={cn(
-          "flex h-screen w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground",
+          "flex h-screen w-(--sidebar-width) min-w-0 flex-col overflow-x-hidden bg-sidebar text-sidebar-foreground",
           className
         )}
         {...props}
@@ -359,7 +359,11 @@ function SidebarSeparator({
     <Separator
       data-slot="sidebar-separator"
       data-sidebar="separator"
-      className={cn("mx-2 w-auto bg-sidebar-border", className)}
+      className={cn(
+        // mx-2 + w-full даёт 100% + отступы → горизонтальный скролл; ширина = 100% минус сумма margin
+        "mx-2 max-w-full shrink-0 bg-sidebar-border data-horizontal:w-[calc(100%-1rem)]",
+        className
+      )}
       {...props}
     />
   )
@@ -371,7 +375,7 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
-        "no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
+        "no-scrollbar flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-y-auto overflow-x-hidden group-data-[collapsible=icon]:overflow-hidden",
         className
       )}
       {...props}
