@@ -215,13 +215,49 @@ export function CuttingBarDiagram({
 
   return (
     <div className="border-border/60 bg-card/30 w-full rounded-md border px-3 py-2">
-      <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-        <Badge variant="secondary" className="h-5 px-1.5 font-mono text-[10px]">
-          {repeat}×
-        </Badge>
-        <span className="text-foreground font-medium tabular-nums">{rangeLabel}</span>
-        <span className="tabular-nums">{stockLengthMm} мм</span>
-        <span className="ml-auto tabular-nums">
+      <div className="mb-1.5 flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+        <p className="min-w-0 flex-1 text-[11px] leading-snug text-muted-foreground">
+          <Badge variant="secondary" className="mr-1.5 inline h-5 align-middle px-1.5 font-mono text-[10px]">
+            {repeat}×
+          </Badge>
+          <span className="text-foreground font-medium tabular-nums">{rangeLabel}</span>
+          <span className="mx-1.5 text-muted-foreground">|</span>
+          <span>
+            Длина заготовки -{" "}
+            <span className="tabular-nums text-foreground">{stockLengthMm}</span> мм | Детали -{" "}
+            {legendRows.length === 0 ? (
+              <span className="text-foreground">—</span>
+            ) : (
+              <span className="inline align-middle">
+                {legendRows.map((row, i) => {
+                  const name = row.label.trim() || `${row.lengthMm} мм`;
+                  return (
+                    <Fragment key={`${displayIndex}-det-${row.label}-${row.lengthMm}-${i}`}>
+                      {i > 0 ? (
+                        <span className="text-muted-foreground">, </span>
+                      ) : null}
+                      <span
+                        className="inline-flex items-center gap-1 align-middle"
+                        title={`${row.label}: ${row.lengthMm} мм — ${row.count} шт.`}
+                      >
+                        <span
+                          className="inline-block size-1.5 shrink-0 rounded-sm"
+                          style={{
+                            background: PALETTE[row.colorIndex % PALETTE.length],
+                          }}
+                        />
+                        <span className="tabular-nums text-foreground">
+                          {name} × {row.count}
+                        </span>
+                      </span>
+                    </Fragment>
+                  );
+                })}
+              </span>
+            )}
+          </span>
+        </p>
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
           ост. {bar.wasteMm.toFixed(0)} мм · занято {bar.usedMm.toFixed(0)} мм
         </span>
       </div>
@@ -293,26 +329,6 @@ export function CuttingBarDiagram({
           ))}
         </div>
       </div>
-
-      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
-        {legendRows.map((row, i) => (
-          <li
-            key={`${displayIndex}-leg-${row.label}-${row.lengthMm}-${i}`}
-            className="flex items-center gap-1.5"
-            title={`${row.label}: ${row.lengthMm} мм — ${row.count} шт.`}
-          >
-            <span
-              className="inline-block size-1.5 shrink-0 rounded-sm"
-              style={{
-                background: PALETTE[row.colorIndex % PALETTE.length],
-              }}
-            />
-            <span className="tabular-nums text-foreground">
-              {row.lengthMm} мм × {row.count}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

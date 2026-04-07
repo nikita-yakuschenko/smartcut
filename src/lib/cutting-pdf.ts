@@ -1,5 +1,6 @@
 import type { BarLayout, CuttingResult, PlacedPiece } from "@/lib/cutting";
 import { groupConsecutiveIdenticalBars } from "@/lib/cutting";
+import { formatStockLengthsBadgeRu } from "@/lib/stock-length-label-ru";
 import type { jsPDF } from "jspdf";
 
 /** Цвета сегментов — близко к палитре карты (chart / UI). */
@@ -115,12 +116,13 @@ function staggerLeaders(
 function aggregateLegend(pieces: PlacedPiece[]) {
   const map = new Map<
     string,
-    { lengthMm: number; colorIndex: number; count: number }
+    { label: string; lengthMm: number; colorIndex: number; count: number }
   >();
   for (const p of pieces) {
     const prev = map.get(p.demandId);
     if (!prev) {
       map.set(p.demandId, {
+        label: p.label,
         lengthMm: p.lengthMm,
         colorIndex: p.colorIndex,
         count: 1,
@@ -231,14 +233,69 @@ function drawSchemeBlock(
       ? `№ ${g.startIndex + 1}–${g.startIndex + g.count}`
       : `№ ${g.startIndex + 1}`;
 
+  const legend = aggregateLegend(bar.pieces);
+  const detailsStr =
+    legend.length > 0
+      ? legend
+          .map((row) => {
+            const name = row.label.trim() || `${row.lengthMm} мм`;
+            return `${name} × ${row.count}`;
+          })
+          .join(", ")
+      : "—";
+
+  const prefix = `${g.count}×  ${rangeLabel} | Длина заготовки - ${L} мм | Детали - `;
+  const maxContentW = pageW - 2 * margin;
+
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
+
+  if (legend.length === 0) {
+    const headerLines = doc.splitTextToSize(`${prefix}—`, maxContentW);
+    doc.text(headerLines, margin, y);
+    y += Math.max(5, headerLines.length * 4.2);
+  } else {
+    let estW = doc.getTextWidth(prefix);
+    for (let i = 0; i < legend.length; i++) {
+      const row = legend[i];
+      const name = row.label.trim() || `${row.lengthMm} мм`;
+      const seg = `${i > 0 ? ", " : ""} ${name} × ${row.count}`;
+      estW += 1.35 + doc.getTextWidth(seg);
+    }
+    if (estW > maxContentW) {
+      const headerMain = `${prefix}${detailsStr}`;
+      const headerLines = doc.splitTextToSize(headerMain, maxContentW);
+      doc.text(headerLines, margin, y);
+      y += Math.max(5, headerLines.length * 4.2);
+    } else {
+      const lineY = y;
+      let cx = margin;
+      doc.text(prefix, cx, lineY);
+      cx += doc.getTextWidth(prefix);
+      for (let i = 0; i < legend.length; i++) {
+        if (i > 0) {
+          doc.text(", ", cx, lineY);
+          cx += doc.getTextWidth(", ");
+        }
+        const row = legend[i];
+        const [R, G, B] = PIECE_RGB[row.colorIndex % PIECE_RGB.length];
+        doc.setFillColor(R, G, B);
+        doc.rect(cx, lineY - 1.15, 1.25, 1.25, "F");
+        doc.setTextColor(75, 85, 99);
+        const name = row.label.trim() || `${row.lengthMm} мм`;
+        const seg = ` ${name} × ${row.count}`;
+        doc.text(seg, cx + 1.35, lineY);
+        cx += 1.35 + doc.getTextWidth(seg);
+      }
+      y += 5;
+    }
+  }
   doc.text(
-    `${g.count}×  ${rangeLabel}  ${L} мм  ·  ост. ${bar.wasteMm.toFixed(0)} мм  ·  занято ${bar.usedMm.toFixed(0)} мм`,
+    `ост. ${bar.wasteMm.toFixed(0)} мм · занято ${bar.usedMm.toFixed(0)} мм`,
     margin,
     y
   );
-  y += 5.5;
+  y += 5;
 
   const barTop = y;
   doc.setDrawColor(200, 200, 205);
@@ -306,23 +363,6 @@ function drawSchemeBlock(
   }
   y = barTop + barH + leaderZoneH;
 
-  const legend = aggregateLegend(bar.pieces);
-  doc.setFontSize(7);
-  doc.setTextColor(85, 85, 95);
-  for (let li = 0; li < legend.length; li++) {
-    const row = legend[li];
-    const [R, G, B] = PIECE_RGB[row.colorIndex % PIECE_RGB.length];
-    doc.setFillColor(R, G, B);
-    doc.rect(margin, y - 1.2, 1.4, 1.4, "F");
-    doc.text(
-      `${row.lengthMm} мм × ${row.count}`,
-      margin + 2.8,
-      y
-    );
-    y += 3.6;
-  }
-  y += 3;
-
   return y;
 }
 
@@ -352,7 +392,7 @@ export async function downloadCuttingPdf(
     `Полезная длина: ${Math.round(result.totalUsefulMm).toLocaleString("ru-RU")} мм из ${Math.round(result.totalStockMm).toLocaleString("ru-RU")} мм`,
     `Условные отходы: ~${result.wastePercent}%`,
     `Пропил: ${result.kerfMm} мм · резов между деталями: ${result.totalCuts}`,
-    `Несколько длин заготовок: ${result.multiStock ? "да" : "нет"}`,
+    formatStockLengthsBadgeRu(result.bars.map((b) => b.stockLengthMm)),
   ];
   for (const line of meta) {
     doc.text(line, margin, y);
@@ -367,7 +407,7 @@ export async function downloadCuttingPdf(
 
   const groups = groupConsecutiveIdenticalBars(result.bars);
   for (const g of groups) {
-    const estH = 38;
+    const estH = 48;
     if (y > pageH - margin - estH) {
       doc.addPage();
       y = margin;

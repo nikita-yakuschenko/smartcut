@@ -75,11 +75,13 @@ import {
   type PlacedPiece,
   type StockSpec,
 } from "@/lib/cutting";
+import { formatStockLengthsBadgeRu } from "@/lib/stock-length-label-ru";
 import {
   CheckCircle2,
   CircleAlert,
   FileDown,
   Info,
+  Layers,
   Plus,
   Ruler,
   Sparkles,
@@ -121,6 +123,20 @@ function parseLengthMm(s: string): number | null {
   const n = parseNum(s);
   if (n == null) return null;
   return Math.round(n);
+}
+
+/** Сколько целых заготовок каждой длины в решении (длины по убыванию). */
+function aggregateStockLengths(
+  bars: readonly { stockLengthMm: number }[]
+): { lengthMm: number; count: number }[] {
+  const map = new Map<number, number>();
+  for (const bar of bars) {
+    const L = Math.round(bar.stockLengthMm);
+    map.set(L, (map.get(L) ?? 0) + 1);
+  }
+  return [...map.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([lengthMm, count]) => ({ lengthMm, count }));
 }
 
 function buildDefaultPieceRows(): PieceRow[] {
@@ -950,60 +966,81 @@ export function CuttingCalculator() {
             <TabsContent value="map" className="mt-0">
               {result && result.bars.length > 0 ? (
                 <Card className="shadow-sm ring-1 ring-border/60">
-              <CardHeader className="border-border/50 gap-4 border-b pb-4 sm:flex-row sm:items-start">
-                <div className="min-w-0 space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <CardTitle className="text-lg">Результат</CardTitle>
-                  </div>
-                  <CardDescription>
-                    Заготовок:{" "}
-                    <span className="text-foreground font-medium tabular-nums">
-                      {result.bars.length}
-                    </span>
-                    . Полезная длина:{" "}
-                    <span className="text-foreground font-medium tabular-nums">
-                      {Math.round(result.totalUsefulMm).toLocaleString("ru-RU")} мм
-                    </span>{" "}
-                    из{" "}
-                    <span className="text-foreground font-medium tabular-nums">
-                      {Math.round(result.totalStockMm).toLocaleString("ru-RU")} мм
-                    </span>
-                    . Резов: {result.totalCuts}.
-                  </CardDescription>
-                </div>
-                <CardAction className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-[200px] sm:items-end">
-                  <Tooltip>
-                    <TooltipTrigger
-                      type="button"
-                      className="inline-flex w-full justify-end sm:w-auto"
-                      aria-label="Про отходы"
-                    >
-                      <Badge variant="outline" className="cursor-help font-normal tabular-nums">
-                        Отходы ~{result.wastePercent}%
-                      </Badge>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs" side="left">
-                      Доля условных отходов от суммарной длины заготовок (без учёта
-                      остатков на складе).
-                    </TooltipContent>
-                  </Tooltip>
-                  <div className="flex flex-wrap justify-end gap-1.5">
+              <CardHeader className="border-border/50 flex! flex-col gap-3 border-b pb-4">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                  <CardTitle className="text-lg leading-tight">Результат</CardTitle>
+                  {/* не CardAction: у shadcn там grid-колонки, ломают flex-шапку */}
+                  <div
+                    data-slot="card-action"
+                    className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5"
+                  >
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        className="inline-flex"
+                        aria-label="Про отходы"
+                      >
+                        <Badge variant="outline" className="cursor-help font-normal tabular-nums">
+                          Отходы ~{result.wastePercent}%
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs" side="left">
+                        Доля условных отходов от суммарной длины заготовок (без учёта
+                        остатков на складе).
+                      </TooltipContent>
+                    </Tooltip>
                     <Badge variant="secondary" className="font-normal tabular-nums">
                       Пропил {result.kerfMm} мм
                     </Badge>
-                    {result.multiStock ? (
-                      <Badge variant="outline" className="font-normal">
-                        Несколько длин заготовок
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="font-normal tabular-nums">
-                        Заготовка{" "}
-                        {(result.bars[0]?.stockLengthMm ?? 0).toLocaleString("ru-RU")}{" "}
-                        мм
-                      </Badge>
-                    )}
+                    <Badge variant="outline" className="font-normal">
+                      {formatStockLengthsBadgeRu(
+                        aggregateStockLengths(result.bars).map((x) => x.lengthMm)
+                      )}
+                    </Badge>
                   </div>
-                </CardAction>
+                </div>
+
+                <div className="min-w-0">
+                  <p className="text-muted-foreground mb-2 flex items-center gap-1.5 text-xs font-medium">
+                    <Layers className="size-3.5 shrink-0 opacity-80" aria-hidden />
+                    Целые заготовки по длинам
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {aggregateStockLengths(result.bars).map(({ lengthMm, count }) => (
+                      <div
+                        key={lengthMm}
+                        className="border-border/70 bg-linear-to-b from-muted/50 to-muted/25 flex items-baseline gap-1.5 rounded-lg border px-2.5 py-1.5 shadow-sm ring-1 ring-border/40"
+                      >
+                        <span className="text-foreground text-xl font-semibold leading-none tabular-nums tracking-tight">
+                          {count}
+                        </span>
+                        <span className="text-muted-foreground text-sm font-light">
+                          ×
+                        </span>
+                        <span className="text-foreground text-sm font-medium tabular-nums">
+                          {lengthMm.toLocaleString("ru-RU")}{" "}
+                          <span className="text-muted-foreground font-normal">мм</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <CardDescription className="text-pretty">
+                  Заготовок:{" "}
+                  <span className="text-foreground font-medium tabular-nums">
+                    {result.bars.length}
+                  </span>
+                  . Полезная длина:{" "}
+                  <span className="text-foreground font-medium tabular-nums">
+                    {Math.round(result.totalUsefulMm).toLocaleString("ru-RU")} мм
+                  </span>{" "}
+                  из{" "}
+                  <span className="text-foreground font-medium tabular-nums">
+                    {Math.round(result.totalStockMm).toLocaleString("ru-RU")} мм
+                  </span>
+                  . Резов: {result.totalCuts}.
+                </CardDescription>
               </CardHeader>
               <CardContent className="pt-6">
                 <div className="space-y-3">
