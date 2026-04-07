@@ -25,9 +25,6 @@ export async function downloadCuttingPdf(
     `Условные отходы: ~${result.wastePercent}%`,
     `Пропил: ${result.kerfMm} мм · резов между деталями: ${result.totalCuts}`,
     `Несколько длин заготовок: ${result.multiStock ? "да" : "нет"}`,
-    result.method === "exact"
-      ? "Алгоритм: точный минимум заготовок"
-      : "Алгоритм: FFD (эвристика)",
   ];
   for (const line of lines) {
     doc.text(line, margin, y);
@@ -87,6 +84,55 @@ export async function downloadCuttingPdf(
       y
     );
     y += 8;
+  }
+
+  if (y > pageH - margin - 50) {
+    doc.addPage();
+    y = margin;
+  } else {
+    y += 6;
+  }
+
+  doc.setTextColor(0);
+  doc.setFontSize(11);
+  doc.text("Сводка", margin, y);
+  y += 7;
+
+  doc.setFontSize(8);
+  doc.setTextColor(60, 60, 60);
+  const colNo = margin;
+  const colLen = margin + 10;
+  const colWaste = margin + 40;
+  const colDetX = margin + 62;
+  const detailMaxW = pageW - margin - colDetX;
+  doc.text("№", colNo, y);
+  doc.text("Длина, мм", colLen, y);
+  doc.text("Остаток, мм", colWaste, y);
+  doc.text("Детали по порядку", colDetX, y);
+  y += 4;
+  doc.setDrawColor(210);
+  doc.line(margin, y, pageW - margin, y);
+  y += 5;
+
+  doc.setTextColor(30, 30, 30);
+  for (let i = 0; i < result.bars.length; i++) {
+    const bar = result.bars[i];
+    const detailStr = bar.pieces.map((p) => p.label).join(" → ");
+    const detailLines = doc.splitTextToSize(detailStr, detailMaxW);
+    const lineCount = Array.isArray(detailLines)
+      ? detailLines.length
+      : 1;
+    const rowH = Math.max(5, lineCount * 3.8);
+    if (y + rowH > pageH - margin) {
+      doc.addPage();
+      y = margin;
+    }
+    const yRow = y + 4;
+    doc.text(String(i + 1), colNo, yRow);
+    doc.text(String(bar.stockLengthMm), colLen, yRow);
+    doc.text(bar.wasteMm.toFixed(0), colWaste, yRow);
+    doc.text(detailLines, colDetX, yRow);
+    y += rowH + 1.5;
   }
 
   doc.save(`smartcut-${new Date().toISOString().slice(0, 10)}.pdf`);

@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+} from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,12 +39,20 @@ import {
 } from "@/components/ui/tooltip";
 import { CuttingBarDiagram } from "@/components/cutting-bar-diagram";
 import { HintTip } from "@/components/hint-tip";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarSeparator,
+  SidebarInset,
+  SidebarProvider,
+} from "@/components/ui/sidebar";
+import { NavUser } from "@/components/nav-user";
 import {
   aggregateSegmentsByLength,
   EXAMPLE_BLANKS,
@@ -55,21 +69,22 @@ import {
   STOCK_UNLIMITED,
   validateDemands,
   groupConsecutiveIdenticalBars,
+  type BarLayout,
   type CuttingResult,
   type DemandItem,
+  type PlacedPiece,
   type StockSpec,
 } from "@/lib/cutting";
 import {
   CheckCircle2,
-  ChevronDown,
   CircleAlert,
   FileDown,
   Info,
-  ListPlus,
   Plus,
   Ruler,
   Sparkles,
   Trash2,
+  GalleryVerticalEndIcon,
 } from "lucide-react";
 
 function newId() {
@@ -125,6 +140,129 @@ const defaultRows: PieceRow[] = [
   },
 ];
 
+const APP_STATE_STORAGE_KEY = "smartcut-app-state-v1";
+const APP_STATE_VERSION = 1;
+
+type AppPersistedState = {
+  v: number;
+  rows: PieceRow[];
+  stockRows: StockRow[];
+  kerfMm: string;
+  applyMiterStock: boolean;
+  result: CuttingResult | null;
+  importBlankText: string;
+  importSegmentText: string;
+  mainTab: "map" | "params";
+};
+
+function parsePieceRowsFromStorage(x: unknown): PieceRow[] | null {
+  if (!Array.isArray(x)) return null;
+  const out: PieceRow[] = [];
+  for (const item of x) {
+    if (!item || typeof item !== "object") return null;
+    const r = item as Record<string, unknown>;
+    if (typeof r.id !== "string") return null;
+    if (typeof r.label !== "string") return null;
+    if (typeof r.outerMm !== "string") return null;
+    if (typeof r.innerMm !== "string") return null;
+    if (typeof r.qty !== "string") return null;
+    out.push({
+      id: r.id,
+      label: r.label,
+      outerMm: r.outerMm,
+      innerMm: r.innerMm,
+      qty: r.qty,
+    });
+  }
+  return out;
+}
+
+function parseStockRowsFromStorage(x: unknown): StockRow[] | null {
+  if (!Array.isArray(x)) return null;
+  const out: StockRow[] = [];
+  for (const item of x) {
+    if (!item || typeof item !== "object") return null;
+    const r = item as Record<string, unknown>;
+    if (typeof r.id !== "string") return null;
+    if (typeof r.lengthMm !== "string") return null;
+    if (typeof r.qty !== "string") return null;
+    out.push({ id: r.id, lengthMm: r.lengthMm, qty: r.qty });
+  }
+  return out;
+}
+
+function parsePlacedPieceFromStorage(x: unknown): PlacedPiece | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.demandId !== "string") return null;
+  if (typeof o.label !== "string") return null;
+  if (typeof o.lengthMm !== "number" || !Number.isFinite(o.lengthMm)) return null;
+  if (typeof o.colorIndex !== "number" || !Number.isInteger(o.colorIndex))
+    return null;
+  return {
+    demandId: o.demandId,
+    label: o.label,
+    lengthMm: o.lengthMm,
+    colorIndex: o.colorIndex,
+  };
+}
+
+function parseBarLayoutFromStorage(x: unknown): BarLayout | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.wasteMm !== "number" || !Number.isFinite(o.wasteMm)) return null;
+  if (typeof o.usedMm !== "number" || !Number.isFinite(o.usedMm)) return null;
+  if (typeof o.stockLengthMm !== "number" || !Number.isFinite(o.stockLengthMm))
+    return null;
+  if (!Array.isArray(o.pieces)) return null;
+  const pieces: PlacedPiece[] = [];
+  for (const p of o.pieces) {
+    const pp = parsePlacedPieceFromStorage(p);
+    if (!pp) return null;
+    pieces.push(pp);
+  }
+  return {
+    pieces,
+    wasteMm: o.wasteMm,
+    usedMm: o.usedMm,
+    stockLengthMm: o.stockLengthMm,
+  };
+}
+
+function parseCuttingResultFromStorage(x: unknown): CuttingResult | null {
+  if (x === null) return null;
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (o.method !== "exact" && o.method !== "ffd") return null;
+  if (typeof o.kerfMm !== "number" || !Number.isFinite(o.kerfMm)) return null;
+  if (typeof o.totalStockMm !== "number" || !Number.isFinite(o.totalStockMm))
+    return null;
+  if (typeof o.totalUsefulMm !== "number" || !Number.isFinite(o.totalUsefulMm))
+    return null;
+  if (typeof o.wastePercent !== "number" || !Number.isFinite(o.wastePercent))
+    return null;
+  if (typeof o.totalCuts !== "number" || !Number.isInteger(o.totalCuts))
+    return null;
+  if (typeof o.multiStock !== "boolean") return null;
+  if (!Array.isArray(o.bars)) return null;
+  const bars: BarLayout[] = [];
+  for (const b of o.bars) {
+    const bl = parseBarLayoutFromStorage(b);
+    if (!bl) return null;
+    bars.push(bl);
+  }
+  return {
+    bars,
+    method: o.method,
+    kerfMm: o.kerfMm,
+    totalStockMm: o.totalStockMm,
+    totalUsefulMm: o.totalUsefulMm,
+    wastePercent: o.wastePercent,
+    totalCuts: o.totalCuts,
+    multiStock: o.multiStock,
+  };
+}
+
 export function CuttingCalculator() {
   const [rows, setRows] = useState<PieceRow[]>(defaultRows);
   const [stockRows, setStockRows] = useState<StockRow[]>([
@@ -137,6 +275,74 @@ export function CuttingCalculator() {
   const [importBlankText, setImportBlankText] = useState("");
   const [importSegmentText, setImportSegmentText] = useState("");
   const [importNotice, setImportNotice] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  const [mainTab, setMainTab] = useState<"map" | "params">("map");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(APP_STATE_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object") return;
+      const p = parsed as Record<string, unknown>;
+      if (p.v !== APP_STATE_VERSION) return;
+
+      const nextRows = parsePieceRowsFromStorage(p.rows);
+      if (nextRows && nextRows.length > 0) setRows(nextRows);
+
+      const nextStock = parseStockRowsFromStorage(p.stockRows);
+      if (nextStock && nextStock.length > 0) setStockRows(nextStock);
+
+      if (typeof p.kerfMm === "string") setKerfMm(p.kerfMm);
+      if (typeof p.applyMiterStock === "boolean")
+        setApplyMiterStock(p.applyMiterStock);
+
+      if ("result" in p) {
+        setResult(parseCuttingResultFromStorage(p.result));
+      }
+
+      if (typeof p.importBlankText === "string")
+        setImportBlankText(p.importBlankText);
+      if (typeof p.importSegmentText === "string")
+        setImportSegmentText(p.importSegmentText);
+
+      if (p.mainTab === "map" || p.mainTab === "params") setMainTab(p.mainTab);
+    } catch {
+      // битый JSON или недоступно хранилище
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const payload: AppPersistedState = {
+        v: APP_STATE_VERSION,
+        rows,
+        stockRows,
+        kerfMm,
+        applyMiterStock,
+        result,
+        importBlankText,
+        importSegmentText,
+        mainTab,
+      };
+      localStorage.setItem(APP_STATE_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // квота или режим без хранилища
+    }
+  }, [
+    hydrated,
+    rows,
+    stockRows,
+    kerfMm,
+    applyMiterStock,
+    result,
+    importBlankText,
+    importSegmentText,
+    mainTab,
+  ]);
 
   const miterInfo = useMemo(() => {
     let maxDeltaMm = 0;
@@ -163,6 +369,13 @@ export function CuttingCalculator() {
   }, [rows]);
 
   const uniqueLengths = useMemo(() => rows.length, [rows]);
+  const segmentImportStats = useMemo(() => {
+    const { rows: parsed } = parseSegmentsPaste(importSegmentText);
+    const positions = parsed.length;
+    let pieces = 0;
+    for (const r of parsed) pieces += r.quantity;
+    return { positions, pieces };
+  }, [importSegmentText]);
 
   function addRow() {
     setRows((prev) => [
@@ -451,197 +664,45 @@ export function CuttingCalculator() {
     }
   }
 
+  const sidebarUser = {
+    name: "shadcn",
+    email: "m@example.com",
+    avatar: "/avatars/shadcn.jpg",
+  };
+
   return (
-    <div className="min-h-full bg-linear-to-b from-background via-background to-muted/25">
-      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-10 md:gap-10 md:px-6 md:py-12">
-      <header className="space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-heading text-3xl font-semibold tracking-tight md:text-4xl">
-                SmartCut
-              </h1>
-              <Badge variant="secondary" className="font-normal">
-                <Ruler className="mr-1 size-3" aria-hidden />
-                Линейный раскрой
-              </Badge>
+    <div className="h-screen overflow-hidden bg-background">
+      <SidebarProvider
+        defaultOpen
+        style={
+          {
+            "--sidebar-width": "28rem",
+          } as CSSProperties
+        }
+      >
+        <Sidebar
+          collapsible="none"
+          className="top-0 border-r border-sidebar-border"
+        >
+          <SidebarHeader>
+            <div className="px-2 py-1 text-base font-semibold tracking-tight">
+              Исходные параметры
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline" className="font-normal">
-                1D · минимум заготовок
-              </Badge>
-              <Tooltip>
-                <TooltipTrigger
-                  type="button"
-                  className="inline-flex"
-                  aria-label="О точном расчёте"
-                >
-                  <Badge variant="outline" className="cursor-help font-normal">
-                    <Sparkles className="mr-1 size-3" aria-hidden />
-                    До {MAX_EXACT_PIECES} дет. — точный алгоритм
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs" side="bottom">
-                  При одной длине заготовки и не больше {MAX_EXACT_PIECES}{" "}
-                  деталей — точный минимум числа заготовок. Иначе — FFD. Несколько
-                  длин заготовок всегда считаются эвристикой FFD.
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <p className="text-muted-foreground max-w-3xl text-[15px] leading-relaxed md:text-base">
-              Подберите число заготовок и схему пропилов для стержней, труб,
-              кабеля, профилей. Учтите ширину реза. Для разных углов реза
-              выполняйте отдельные расчёты.
-            </p>
-          </div>
-        </div>
-      </header>
-
-      <Card className="overflow-hidden shadow-sm ring-1 ring-border/60">
-        <Collapsible defaultOpen className="w-full">
-          <CollapsibleTrigger className="flex w-full flex-col gap-0 text-left transition-colors hover:bg-muted/40">
-            <CardHeader className="border-border/60 gap-3 border-b py-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                <span className="bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-lg">
-                  <ListPlus className="size-5" aria-hidden />
-                </span>
-                <div className="min-w-0 space-y-1">
-                  <CardTitle className="text-lg">Импорт данных</CardTitle>
-                  <CardDescription className="line-clamp-2 sm:line-clamp-none">
-                    Вставка из буфера или файла — длины отрезков в миллиметрах
-                  </CardDescription>
-                </div>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-                <Badge variant="outline" className="font-normal">
-                  Таблица
+          </SidebarHeader>
+          <SidebarContent className="gap-1 p-2">
+            <SidebarGroup>
+              <div className="flex items-center justify-between px-2">
+                <SidebarGroupLabel className="px-0">Отрезки</SidebarGroupLabel>
+                <Badge variant="outline" className="font-normal tabular-nums">
+                  поз. {segmentImportStats.positions} · дет. {segmentImportStats.pieces}
                 </Badge>
-                <Badge variant="secondary" className="font-normal">
-                  XLSX
-                </Badge>
-                <ChevronDown className="text-muted-foreground size-5 shrink-0" aria-hidden />
               </div>
-            </CardHeader>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <CardContent className="space-y-6 pt-2 pb-6">
-              <p className="text-muted-foreground text-sm leading-relaxed">
-                Вставьте данные по одной строке: формат{" "}
-                <code className="bg-muted rounded px-1 py-0.5 text-xs">
-                  длина количество
-                </code>{" "}
-                или{" "}
-                <code className="bg-muted rounded px-1 py-0.5 text-xs">
-                  длина количество название
-                </code>{" "}
-                — колонки из Excel разделяются табуляцией или пробелами. Затем
-                нажмите соответствующую кнопку импорта.{" "}
-                <strong>Длины в списке отрезков — в миллиметрах.</strong>{" "}
-                Повторяющиеся длины при импорте объединяются: количества
-                суммируются.
-              </p>
-              <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-                <button
-                  type="button"
-                  className="text-primary font-medium underline-offset-4 hover:underline"
-                  onClick={() => {
-                    setImportBlankText(EXAMPLE_BLANKS);
-                    setImportSegmentText(EXAMPLE_SEGMENTS);
-                  }}
-                >
-                  Пример
-                </button>
-                <label className="text-primary cursor-pointer font-medium underline-offset-4 hover:underline">
-                  Файл для заготовок (CSV, TXT)
-                  <input
-                    type="file"
-                    accept=".csv,.txt,text/csv"
-                    className="sr-only"
-                    onChange={handleCsvBlanksFile}
-                  />
-                </label>
-                <label className="text-primary cursor-pointer font-medium underline-offset-4 hover:underline">
-                  Файл отрезков текстом (CSV, TXT)
-                  <input
-                    type="file"
-                    accept=".csv,.txt,text/csv"
-                    className="sr-only"
-                    onChange={handleTextSegmentsFile}
-                  />
-                </label>
-                <label className="text-primary cursor-pointer font-medium underline-offset-4 hover:underline">
-                  Отрезки из Excel (XLSX, XLS)
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                    className="sr-only"
-                    onChange={(ev) => {
-                      void handleSegmentsExcelFile(ev);
-                    }}
-                  />
-                </label>
-              </div>
-              <p className="text-muted-foreground text-xs">
-                Excel для отрезков: первый лист, колонка A — длина (мм), B —
-                количество (если пусто — по 1 шт. на строку). Можно вставить те
-                же данные из Excel в поле ниже (копированием).
-              </p>
-
-              <div className="space-y-2">
-                <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11px] font-medium tracking-wide uppercase">
-                  <span>
-                    Длина заготовки <span className="text-destructive">*</span>
-                  </span>
-                  <span>
-                    Количество <span className="text-destructive">*</span> 0–∞
-                  </span>
-                  <span>Название</span>
-                  <span>Очерёдность</span>
-                  <span>Материал</span>
-                  <span>Стоимость</span>
-                </div>
-                <Label className="text-foreground font-medium">
-                  Заготовки / склад
-                </Label>
-                <Textarea
-                  value={importBlankText}
-                  onChange={(e) => setImportBlankText(e.target.value)}
-                  placeholder={
-                    "6000\t5\tТруба\n12000\t0\tТруба2\n(длина в мм, табуляция или пробелы)"
-                  }
-                  className="min-h-[120px] font-mono text-sm"
-                  spellCheck={false}
-                />
-                <Button
-                  type="button"
-                  className="w-full"
-                  onClick={handleImportBlanks}
-                >
-                  Импорт заготовок
-                </Button>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-2">
-                <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11px] font-medium tracking-wide uppercase">
-                  <span>
-                    Длина отрезка <span className="text-destructive">*</span>
-                  </span>
-                  <span>
-                    Количество <span className="text-destructive">*</span>
-                  </span>
-                  <span>Название</span>
-                  <span>Материал</span>
-                </div>
-                <Label className="text-foreground font-medium">Отрезки</Label>
+              <SidebarGroupContent className="space-y-2 px-2">
                 <Textarea
                   value={importSegmentText}
                   onChange={(e) => setImportSegmentText(e.target.value)}
-                  placeholder={
-                    "1429\t1\n1429\t1\n1330\t1\n… (табуляция; длина в мм, одна строка — одна или несколько штук по колонке B)"
-                  }
-                  className="min-h-[160px] font-mono text-sm"
+                  placeholder={"1429\t1\n1429\t1\n1330\t1"}
+                  className="h-[120px] resize-none font-mono text-sm"
                   spellCheck={false}
                 />
                 <Button
@@ -652,58 +713,16 @@ export function CuttingCalculator() {
                 >
                   Импорт отрезков
                 </Button>
-              </div>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarSeparator />
 
-              {importNotice && (
-                <Alert className="border-primary/30 bg-primary/5">
-                  <CheckCircle2 className="text-primary" />
-                  <AlertTitle>Готово</AlertTitle>
-                  <AlertDescription className="text-foreground/90">
-                    {importNotice}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        </Collapsible>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-        <Card className="shadow-sm ring-1 ring-border/60">
-          <CardHeader className="border-border/50 gap-4 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1.5">
-              <CardTitle className="text-lg">Исходные данные</CardTitle>
-              <CardDescription>
-                Длины деталей и заготовок — в миллиметрах. Наружная и внутренняя
-                длина под углом: в расчёт входит{" "}
-                <strong>средняя</strong> длина.
-              </CardDescription>
-            </div>
-            <CardAction className="flex flex-wrap justify-end gap-1.5 pt-0">
-              <Badge variant="outline" className="font-normal tabular-nums">
-                Позиций: {uniqueLengths}
-              </Badge>
-              <Badge variant="secondary" className="font-normal tabular-nums">
-                Деталей: {totalPieces}
-              </Badge>
-              <Tooltip>
-                <TooltipTrigger
-                  type="button"
-                  className="inline-flex"
-                  aria-label="Про единицы"
-                >
-                  <Badge variant="outline" className="cursor-help font-normal">
-                    мм
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs" side="left">
-                  Все длины в таблице и пропил задаются в миллиметрах.
-                </TooltipContent>
-              </Tooltip>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-3">
+            <SidebarGroup>
+              <SidebarGroupLabel>
+                Заготовки
+              </SidebarGroupLabel>
+              <SidebarGroupContent className="space-y-4 px-2">
+                <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <Label className="text-base">Заготовки (склад)</Label>
@@ -783,385 +802,331 @@ export function CuttingCalculator() {
                   </TableBody>
                 </Table>
               </ScrollArea>
-            </div>
-
-            <div className="max-w-md space-y-2">
-              <div className="flex items-center gap-1.5">
-                <Label htmlFor="kerf">Пропил</Label>
-                <Badge
-                  variant="outline"
-                  className="h-5 px-1.5 text-[10px] font-normal"
-                >
-                  мм
-                </Badge>
-                <HintTip label="Что такое пропил">
-                  Ширина реза между соседними деталями на одной заготовке.
-                  Для расчёта без потерь на рез укажите 0.
-                </HintTip>
-              </div>
-              <Input
-                id="kerf"
-                inputMode="decimal"
-                value={kerfMm}
-                onChange={(e) => setKerfMm(e.target.value)}
-                placeholder="0"
-              />
-            </div>
-
-            {miterInfo.maxDeltaMm > 0 && (
-              <div className="bg-muted/40 flex items-start gap-3 rounded-lg border p-4">
-                <Checkbox
-                  id="miter-stock"
-                  checked={applyMiterStock}
-                  onCheckedChange={(v) => setApplyMiterStock(v === true)}
-                  className="mt-0.5"
-                />
-                <div className="grid gap-1.5 leading-snug">
-                  <Label
-                    htmlFor="miter-stock"
-                    className="cursor-pointer text-sm leading-none font-medium"
-                  >
-                    Укоротить каждую заготовку на max (наружная − средняя)
-                  </Label>
-                  <p className="text-muted-foreground text-sm leading-relaxed">
-                    Ко всем строкам заготовок вычитается{" "}
-                    {miterInfo.maxDeltaMm.toFixed(0)} мм (косой рез с одинаковым
-                    углом у деталей).
-                  </p>
                 </div>
-              </div>
-            )}
-
-            <Separator />
-
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Label className="text-base">Детали</Label>
-                  <Badge variant="outline" className="font-normal">
-                    мм
-                  </Badge>
-                  <HintTip label="Таблица деталей">
-                    Каждая строка — тип детали: длина в мм и количество штук.
-                    Внутренняя длина — для фасок; иначе оставьте пустым.
-                  </HintTip>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarSeparator />
+            <SidebarGroup>
+              <SidebarGroupLabel>Пропил</SidebarGroupLabel>
+              <SidebarGroupContent className="space-y-3 px-2">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="kerf">Ширина реза</Label>
+                    <Badge
+                      variant="outline"
+                      className="h-5 px-1.5 text-[10px] font-normal"
+                    >
+                      мм
+                    </Badge>
+                  </div>
+                  <Input
+                    id="kerf"
+                    inputMode="decimal"
+                    value={kerfMm}
+                    onChange={(e) => setKerfMm(e.target.value)}
+                    placeholder="0"
+                  />
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={addRow}>
-                  <Plus className="mr-1 size-4" />
-                  Строка
-                </Button>
-              </div>
-
-              <ScrollArea className="h-[min(420px,55vh)] w-full rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[min(140px,28vw)]">Название</TableHead>
-                      <TableHead>
-                        <span className="inline-flex items-center gap-1">
-                          Наруж. (мм)
-                          <HintTip label="Наружняя длина детали после реза" side="bottom">
-                            Длина по внешней стороне; при фаске заполните также
-                            «Внутр.».
-                          </HintTip>
-                        </span>
-                      </TableHead>
-                      <TableHead>
-                        <span className="inline-flex items-center gap-1">
-                          Внутр. (мм)
-                          <HintTip label="Внутренняя длина" side="bottom">
-                            Необязательно. Если указано вместе с наружней, в
-                            расчёт идёт средняя длина.
-                          </HintTip>
-                        </span>
-                      </TableHead>
-                      <TableHead className="w-[88px]">
-                        <span className="inline-flex items-center gap-1">
-                          Кол-во
-                          <HintTip label="Количество одинаковых деталей" side="bottom">
-                            Целое число штук для этой строки.
-                          </HintTip>
-                        </span>
-                      </TableHead>
-                      <TableHead className="w-12" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell>
-                          <Input
-                            value={r.label}
-                            onChange={(e) =>
-                              updateRow(r.id, { label: e.target.value })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            inputMode="decimal"
-                            value={r.outerMm}
-                            onChange={(e) =>
-                              updateRow(r.id, { outerMm: e.target.value })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            inputMode="decimal"
-                            placeholder="—"
-                            value={r.innerMm}
-                            onChange={(e) =>
-                              updateRow(r.id, { innerMm: e.target.value })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            inputMode="numeric"
-                            value={r.qty}
-                            onChange={(e) =>
-                              updateRow(r.id, { qty: e.target.value })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="text-muted-foreground"
-                            disabled={rows.length <= 1}
-                            onClick={() => removeRow(r.id)}
-                            aria-label="Удалить строку"
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            </div>
-
-            <Button type="button" size="lg" className="w-full sm:w-auto" onClick={handleCalculate}>
-              Рассчитать раскрой
-            </Button>
-
-            {error && (
-              <Alert variant="destructive">
-                <CircleAlert />
-                <AlertTitle>Ошибка</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          <Card className="shadow-sm ring-1 ring-border/60">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-base">Подсказки</CardTitle>
-                <Badge variant="secondary" className="font-normal">
-                  Советы
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="text-muted-foreground space-y-4 text-sm leading-relaxed">
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="font-normal">
-                    Углы
-                  </Badge>
-                  <strong className="text-foreground font-medium">
-                    Разные углы реза
-                  </strong>
-                </div>
-                <p>
-                  Две группы косых резов (например 30° и 60°) —{" "}
-                  <strong className="text-foreground">два расчёта</strong>. Один
-                  угол у всех — один расчёт.
-                </p>
-              </div>
-              <Separator />
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="font-normal">
-                    Фаски
-                  </Badge>
-                  <strong className="text-foreground font-medium">
-                    Наружняя / внутренняя
-                  </strong>
-                </div>
-                <p>
-                  Обе длины в мм — в расчёт средняя; коррекция заготовки по max
-                  (наружняя − средняя).
-                </p>
-              </div>
-              <Separator />
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="font-normal">
-                    Алгоритм
-                  </Badge>
-                  <strong className="text-foreground font-medium">
-                    Точность
-                  </strong>
-                </div>
-                <p>
-                  Одна длина заготовки и до {MAX_EXACT_PIECES} деталей — точный
-                  перебор. Несколько длин заготовок — всегда FFD.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {result && result.bars.length > 0 && (
-        <Card className="shadow-sm ring-1 ring-border/60">
-          <CardHeader className="border-border/50 gap-4 border-b pb-4 sm:flex-row sm:items-start">
-            <div className="min-w-0 space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-lg">Результат</CardTitle>
-                <Badge
-                  variant={
-                    result.method === "exact" ? "default" : "secondary"
-                  }
-                  className="font-normal"
-                >
-                  {result.method === "exact"
-                    ? "Точный минимум"
-                    : "Эвристика FFD"}
-                </Badge>
-              </div>
-              <CardDescription>
-                Заготовок:{" "}
-                <span className="text-foreground font-medium tabular-nums">
-                  {result.bars.length}
-                </span>
-                . Полезная длина:{" "}
-                <span className="text-foreground font-medium tabular-nums">
-                  {Math.round(result.totalUsefulMm).toLocaleString("ru-RU")} мм
-                </span>{" "}
-                из{" "}
-                <span className="text-foreground font-medium tabular-nums">
-                  {Math.round(result.totalStockMm).toLocaleString("ru-RU")} мм
-                </span>
-                . Резов: {result.totalCuts}.
-              </CardDescription>
-            </div>
-            <CardAction className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-[200px] sm:items-end">
-              <Tooltip>
-                <TooltipTrigger
-                  type="button"
-                  className="inline-flex w-full justify-end sm:w-auto"
-                  aria-label="Про отходы"
-                >
-                  <Badge variant="outline" className="cursor-help font-normal tabular-nums">
-                    Отходы ~{result.wastePercent}%
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs" side="left">
-                  Доля условных отходов от суммарной длины заготовок (без учёта
-                  остатков на складе).
-                </TooltipContent>
-              </Tooltip>
-              <div className="flex flex-wrap justify-end gap-1.5">
-                <Badge variant="secondary" className="font-normal tabular-nums">
-                  Пропил {result.kerfMm} мм
-                </Badge>
-                {result.multiStock ? (
-                  <Badge variant="outline" className="font-normal">
-                    Несколько длин заготовок
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="font-normal tabular-nums">
-                    Заготовка{" "}
-                    {(result.bars[0]?.stockLengthMm ?? 0).toLocaleString("ru-RU")}{" "}
-                    мм
-                  </Badge>
+                {miterInfo.maxDeltaMm > 0 && (
+                  <div className="bg-muted/40 flex items-start gap-3 rounded-lg border p-3">
+                    <Checkbox
+                      id="miter-stock"
+                      checked={applyMiterStock}
+                      onCheckedChange={(v) => setApplyMiterStock(v === true)}
+                      className="mt-0.5"
+                    />
+                    <div className="grid gap-1 leading-snug">
+                      <Label
+                        htmlFor="miter-stock"
+                        className="cursor-pointer text-sm leading-none font-medium"
+                      >
+                        Коррекция заготовки по фаске
+                      </Label>
+                      <p className="text-muted-foreground text-xs leading-relaxed">
+                        Вычесть {miterInfo.maxDeltaMm.toFixed(0)} мм из длины каждой
+                        заготовки.
+                      </p>
+                    </div>
+                  </div>
                 )}
-              </div>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <div className="mb-4 flex flex-wrap gap-2">
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+          <SidebarFooter>
+            <div className="px-2 pb-2">
               <Button
                 type="button"
-                variant="secondary"
+                size="lg"
+                className="w-full"
+                onClick={handleCalculate}
+              >
+                Рассчитать раскрой
+              </Button>
+            </div>
+            <NavUser user={sidebarUser} />
+          </SidebarFooter>
+        </Sidebar>
+
+        <SidebarInset className="h-screen overflow-y-auto">
+        <main className="space-y-4 p-4">
+          <div className="space-y-3 px-2 py-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-3xl font-semibold tracking-tight">SmartCut</h1>
+              <Badge variant="secondary" className="font-normal">
+                <Ruler className="mr-1 size-3" aria-hidden />
+                Линейный раскрой
+              </Badge>
+              <Badge variant="outline" className="font-normal">
+                1D · минимум заготовок
+              </Badge>
+              <Badge variant="outline" className="font-normal">
+                <Sparkles className="mr-1 size-3" aria-hidden />
+                До {MAX_EXACT_PIECES} дет. — точный алгоритм
+              </Badge>
+            </div>
+            <p className="text-muted-foreground text-sm">
+              Подберите число заготовок и схему пропилов для стержней, труб, кабеля
+              и профилей. Учтите ширину реза. Для разных углов реза выполняйте
+              отдельные расчёты.
+            </p>
+          </div>
+          <Tabs
+            value={mainTab}
+            onValueChange={(v) =>
+              setMainTab(v === "params" ? "params" : "map")
+            }
+            className="gap-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <TabsList className="grid h-9 w-full max-w-md grid-cols-2">
+                <TabsTrigger value="map">Карта раскроя</TabsTrigger>
+                <TabsTrigger value="params">Параметры расчёта</TabsTrigger>
+              </TabsList>
+              <Button
+                type="button"
                 size="sm"
-                className="gap-2"
-                onClick={() => downloadCuttingPdf(result)}
+                className="gap-2 border border-[#B42822] bg-[#D93831] text-white hover:bg-[#B42822]"
+                onClick={() => result && downloadCuttingPdf(result)}
+                disabled={!result || result.bars.length === 0}
               >
                 <FileDown className="size-4" />
                 Скачать PDF
               </Button>
             </div>
-            <Tabs defaultValue="diagrams" className="gap-4">
-              <TabsList className="grid h-9 w-full max-w-md grid-cols-2">
-                <TabsTrigger value="diagrams">Схемы</TabsTrigger>
-                <TabsTrigger value="table">Сводка</TabsTrigger>
-              </TabsList>
-              <TabsContent value="diagrams" className="mt-4 space-y-3">
-                <p className="text-muted-foreground mb-1 text-xs leading-snug">
-                  Красный пунктир — центр пропила между деталями. Штриховка — остаток.
-                  Красные выноски: число — накопленная координата до линии реза (мм), без
-                  подписи единицы на схеме.
-                </p>
-                {groupConsecutiveIdenticalBars(result.bars).map((g, idx) => (
-                  <CuttingBarDiagram
-                    key={`${g.startIndex}-${idx}`}
-                    bar={g.bar}
-                    kerfMm={result.kerfMm}
-                    displayIndex={g.startIndex + 1}
-                    repeat={g.count}
-                  />
-                ))}
-              </TabsContent>
-              <TabsContent value="table" className="mt-4">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>№</TableHead>
-                      <TableHead>Длина заготовки, мм</TableHead>
-                      <TableHead>Детали по порядку</TableHead>
-                      <TableHead className="text-right">Остаток, мм</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {result.bars.map((bar, i) => (
-                      <TableRow key={i}>
-                        <TableCell>{i + 1}</TableCell>
-                        <TableCell className="tabular-nums">
-                          {bar.stockLengthMm}
-                        </TableCell>
-                        <TableCell>
-                          {bar.pieces.map((p) => p.label).join(" → ")}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {bar.wasteMm.toFixed(0)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      )}
 
-      {result && result.bars.length === 0 && (
-        <Alert>
-          <Info className="size-4" />
-          <AlertTitle>Нет деталей</AlertTitle>
-          <AlertDescription>Добавьте хотя бы одну деталь.</AlertDescription>
-        </Alert>
-      )}
-      </div>
+            <TabsContent value="map" className="mt-0">
+              {result && result.bars.length > 0 ? (
+                <Card className="shadow-sm ring-1 ring-border/60">
+              <CardHeader className="border-border/50 gap-4 border-b pb-4 sm:flex-row sm:items-start">
+                <div className="min-w-0 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CardTitle className="text-lg">Результат</CardTitle>
+                  </div>
+                  <CardDescription>
+                    Заготовок:{" "}
+                    <span className="text-foreground font-medium tabular-nums">
+                      {result.bars.length}
+                    </span>
+                    . Полезная длина:{" "}
+                    <span className="text-foreground font-medium tabular-nums">
+                      {Math.round(result.totalUsefulMm).toLocaleString("ru-RU")} мм
+                    </span>{" "}
+                    из{" "}
+                    <span className="text-foreground font-medium tabular-nums">
+                      {Math.round(result.totalStockMm).toLocaleString("ru-RU")} мм
+                    </span>
+                    . Резов: {result.totalCuts}.
+                  </CardDescription>
+                </div>
+                <CardAction className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-[200px] sm:items-end">
+                  <Tooltip>
+                    <TooltipTrigger
+                      type="button"
+                      className="inline-flex w-full justify-end sm:w-auto"
+                      aria-label="Про отходы"
+                    >
+                      <Badge variant="outline" className="cursor-help font-normal tabular-nums">
+                        Отходы ~{result.wastePercent}%
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs" side="left">
+                      Доля условных отходов от суммарной длины заготовок (без учёта
+                      остатков на складе).
+                    </TooltipContent>
+                  </Tooltip>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    <Badge variant="secondary" className="font-normal tabular-nums">
+                      Пропил {result.kerfMm} мм
+                    </Badge>
+                    {result.multiStock ? (
+                      <Badge variant="outline" className="font-normal">
+                        Несколько длин заготовок
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="font-normal tabular-nums">
+                        Заготовка{" "}
+                        {(result.bars[0]?.stockLengthMm ?? 0).toLocaleString("ru-RU")}{" "}
+                        мм
+                      </Badge>
+                    )}
+                  </div>
+                </CardAction>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <div className="space-y-3">
+                  {groupConsecutiveIdenticalBars(result.bars).map((g, idx) => (
+                    <CuttingBarDiagram
+                      key={`${g.startIndex}-${idx}`}
+                      bar={g.bar}
+                      kerfMm={result.kerfMm}
+                      displayIndex={g.startIndex + 1}
+                      repeat={g.count}
+                    />
+                  ))}
+                </div>
+              </CardContent>
+                </Card>
+              ) : (
+                <Alert>
+                  <Info className="size-4" />
+                  <AlertTitle>Нет результата</AlertTitle>
+                  <AlertDescription>Сначала выполните расчет кнопкой в сайдбаре.</AlertDescription>
+                </Alert>
+              )}
+            </TabsContent>
+
+            <TabsContent value="params" className="mt-0">
+              <Card className="shadow-sm ring-1 ring-border/60">
+                <CardHeader className="border-border/50 gap-4 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1.5">
+                    <CardTitle className="text-lg">Параметры расчета</CardTitle>
+                    <CardDescription>
+                      Длины деталей и пропил задаются в миллиметрах.
+                    </CardDescription>
+                  </div>
+                  <CardAction className="flex flex-wrap justify-end gap-1.5 pt-0">
+                    <Badge variant="outline" className="font-normal tabular-nums">
+                      Позиций: {uniqueLengths}
+                    </Badge>
+                    <Badge variant="secondary" className="font-normal tabular-nums">
+                      Деталей: {totalPieces}
+                    </Badge>
+                  </CardAction>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <Separator />
+
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Label className="text-base">Детали</Label>
+                        <Badge variant="outline" className="font-normal">
+                          мм
+                        </Badge>
+                        <HintTip label="Таблица деталей">
+                          Каждая строка — тип детали: длина в мм и количество штук.
+                          Внутренняя длина — для фасок; иначе оставьте пустым.
+                        </HintTip>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={addRow}>
+                        <Plus className="mr-1 size-4" />
+                        Строка
+                      </Button>
+                    </div>
+
+                    <ScrollArea className="h-[min(420px,55vh)] w-full rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[min(140px,28vw)]">Название</TableHead>
+                            <TableHead>
+                              <span className="inline-flex items-center gap-1">
+                                Наруж. (мм)
+                              </span>
+                            </TableHead>
+                            <TableHead>
+                              <span className="inline-flex items-center gap-1">
+                                Внутр. (мм)
+                              </span>
+                            </TableHead>
+                            <TableHead className="w-[88px]">Кол-во</TableHead>
+                            <TableHead className="w-12" />
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {rows.map((r) => (
+                            <TableRow key={r.id}>
+                              <TableCell>
+                                <Input
+                                  value={r.label}
+                                  onChange={(e) =>
+                                    updateRow(r.id, { label: e.target.value })
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  inputMode="decimal"
+                                  value={r.outerMm}
+                                  onChange={(e) =>
+                                    updateRow(r.id, { outerMm: e.target.value })
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  inputMode="decimal"
+                                  placeholder="—"
+                                  value={r.innerMm}
+                                  onChange={(e) =>
+                                    updateRow(r.id, { innerMm: e.target.value })
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  inputMode="numeric"
+                                  value={r.qty}
+                                  onChange={(e) =>
+                                    updateRow(r.id, { qty: e.target.value })
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-muted-foreground"
+                                  disabled={rows.length <= 1}
+                                  onClick={() => removeRow(r.id)}
+                                  aria-label="Удалить строку"
+                                >
+                                  <Trash2 className="size-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </ScrollArea>
+                  </div>
+
+                  {error && (
+                    <Alert variant="destructive">
+                      <CircleAlert />
+                      <AlertTitle>Ошибка</AlertTitle>
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+          </Tabs>
+        </main>
+        </SidebarInset>
+      </SidebarProvider>
     </div>
   );
 }
