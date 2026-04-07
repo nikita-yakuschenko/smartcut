@@ -1,10 +1,12 @@
+# Снаружи по умолчанию 3001 (часто 3000 на сервере занят). Внутри контейнера — 3000.
+# Переопределить: HOST_PORT=8080
 services:
   smartcut:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "${HOST_PORT:-3001}:3000"
     environment:
       NODE_ENV: production
     restart: unless-stopped
