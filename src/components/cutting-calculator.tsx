@@ -1108,7 +1108,8 @@ export function CuttingCalculator() {
               <TabsContent value="diagrams" className="mt-4 space-y-3">
                 <p className="text-muted-foreground mb-1 text-xs leading-snug">
                   Красный пунктир — центр пропила между деталями. Штриховка — остаток.
-                  Под полосой — накопленная длина от начала, мм.
+                  Красные выноски: число — накопленная координата до линии реза (мм), без
+                  подписи единицы на схеме.
                 </p>
                 {groupConsecutiveIdenticalBars(result.bars).map((g, idx) => (
                   <CuttingBarDiagram

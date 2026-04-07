@@ -3,7 +3,6 @@
 import { Fragment } from "react";
 import { Badge } from "@/components/ui/badge";
 import type { BarLayout, PlacedPiece } from "@/lib/cutting";
-import { cumulativePositionsMm } from "@/lib/cutting";
 
 const PALETTE = [
   "var(--chart-1)",
@@ -16,7 +15,6 @@ const PALETTE = [
   "oklch(0.65 0.15 140)",
 ];
 
-/** Уникальные детали на заготовке: длина, подпись, цвет, число штук. */
 function aggregatePiecesForLegend(pieces: PlacedPiece[]) {
   const map = new Map<
     string,
@@ -38,27 +36,49 @@ function aggregatePiecesForLegend(pieces: PlacedPiece[]) {
   return [...map.values()].sort((a, b) => b.lengthMm - a.lengthMm);
 }
 
-function filterCumulativeLabels(
-  values: number[],
+/** Центр каждого пропила и накопленная координата до него (мм от начала заготовки). */
+function cutCenterLeaders(
+  bar: BarLayout,
+  kerfMm: number
+): { centerMm: number; valueMm: number }[] {
+  const wasteMm = Math.max(0, bar.wasteMm);
+  const n = bar.pieces.length;
+  const out: { centerMm: number; valueMm: number }[] = [];
+  let x = 0;
+  for (let i = 0; i < n; i++) {
+    x += bar.pieces[i].lengthMm;
+    const hasKerfAfter = i < n - 1 || wasteMm > 0;
+    if (hasKerfAfter) {
+      const center = x + kerfMm / 2;
+      out.push({ centerMm: center, valueMm: center });
+      x += kerfMm;
+    }
+  }
+  return out;
+}
+
+/** Убираем выноски, если центры слишком близко по ширине бара. */
+function filterLeadersByGap(
+  items: { centerMm: number; valueMm: number }[],
   stockLengthMm: number,
   minGapFrac: number
-): number[] {
-  if (stockLengthMm <= 0 || values.length === 0) return [];
-  const sorted = [...new Set(values)].sort((a, b) => a - b);
-  const out: number[] = [];
+): { centerMm: number; valueMm: number }[] {
+  if (stockLengthMm <= 0 || items.length === 0) return [];
+  const sorted = [...items].sort((a, b) => a.centerMm - b.centerMm);
+  const out: { centerMm: number; valueMm: number }[] = [];
   let lastFrac = -Infinity;
-  for (const v of sorted) {
-    const f = v / stockLengthMm;
+  for (const it of sorted) {
+    const f = it.centerMm / stockLengthMm;
     if (out.length === 0 || f - lastFrac >= minGapFrac) {
-      out.push(v);
+      out.push(it);
       lastFrac = f;
     }
   }
   const lastVal = sorted[sorted.length - 1];
-  if (lastVal != null && out[out.length - 1] !== lastVal) {
+  if (lastVal != null && out[out.length - 1]?.centerMm !== lastVal.centerMm) {
     out.push(lastVal);
   }
-  return [...new Set(out)].sort((a, b) => a - b);
+  return out;
 }
 
 type Props = {
@@ -68,7 +88,6 @@ type Props = {
   repeat?: number;
 };
 
-/** Колонка пропила: пунктир по центру и выше/ниже полосы деталей. */
 function KerfSlot({ kerfMm }: { kerfMm: number }) {
   return (
     <div
@@ -84,6 +103,47 @@ function KerfSlot({ kerfMm }: { kerfMm: number }) {
   );
 }
 
+/** Число без «мм» + красная линия со стрелкой к линии реза (правый край выноски = разрез). */
+function DimensionLeader({
+  valueRounded,
+  leftPct,
+}: {
+  valueRounded: number;
+  leftPct: number;
+}) {
+  return (
+    <div
+      className="pointer-events-none absolute bottom-0 flex flex-col items-end"
+      style={{
+        left: `${leftPct}%`,
+        transform: "translateX(-100%)",
+        width: "max-content",
+      }}
+    >
+      <span className="text-foreground mb-0.5 pr-0.5 text-[10px] leading-none font-medium tabular-nums">
+        {valueRounded}
+      </span>
+      <svg
+        width="48"
+        height="11"
+        viewBox="0 0 48 11"
+        className="text-red-500"
+        aria-hidden
+      >
+        <line
+          x1="0"
+          y1="8"
+          x2="36"
+          y2="8"
+          stroke="currentColor"
+          strokeWidth="1.1"
+        />
+        <path d="M36 8 L44 5 L44 11 Z" fill="currentColor" />
+      </svg>
+    </div>
+  );
+}
+
 export function CuttingBarDiagram({
   bar,
   kerfMm,
@@ -91,7 +151,6 @@ export function CuttingBarDiagram({
   repeat = 1,
 }: Props) {
   const stockLengthMm = bar.stockLengthMm;
-  const cum = cumulativePositionsMm(bar, kerfMm);
   const wasteMm = Math.max(0, bar.wasteMm);
 
   const rangeLabel =
@@ -99,7 +158,8 @@ export function CuttingBarDiagram({
       ? `№ ${displayIndex}–${displayIndex + repeat - 1}`
       : `№ ${displayIndex}`;
 
-  const cumShown = filterCumulativeLabels(cum, stockLengthMm, 0.045);
+  const leadersRaw = cutCenterLeaders(bar, kerfMm);
+  const leaders = filterLeadersByGap(leadersRaw, stockLengthMm, 0.045);
   const legendRows = aggregatePiecesForLegend(bar.pieces);
 
   return (
@@ -115,7 +175,6 @@ export function CuttingBarDiagram({
         </span>
       </div>
 
-      {/* Ряд: деталь — пропил — … — при остатке: пропил перед отходом */}
       <div className="my-1.5 flex h-9 w-full min-w-0 items-stretch overflow-visible rounded-sm border border-border bg-muted/35 p-px shadow-sm">
         {bar.pieces.map((p, i) => {
           const isFirst = i === 0;
@@ -167,26 +226,18 @@ export function CuttingBarDiagram({
         )}
       </div>
 
-      <div className="relative mt-1 h-5 w-full">
-        {cumShown.map((mm) => (
-          <span
-            key={`cum-${mm}`}
-            className="text-muted-foreground absolute text-[9px] tabular-nums"
-            style={{
-              left: `${(mm / stockLengthMm) * 100}%`,
-              transform: "translateX(-50%)",
-              maxWidth: "42%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {mm}
-          </span>
+      {/* Выноски: число, красная линия, стрелка к вертикали реза */}
+      <div className="relative mt-0 h-[42px] w-full">
+        {leaders.map((L, idx) => (
+          <DimensionLeader
+            key={`${displayIndex}-ld-${idx}-${L.centerMm}`}
+            valueRounded={Math.round(L.valueMm)}
+            leftPct={(L.centerMm / stockLengthMm) * 100}
+          />
         ))}
       </div>
 
-      <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
         {legendRows.map((row, i) => (
           <li
             key={`${displayIndex}-leg-${row.label}-${row.lengthMm}-${i}`}
