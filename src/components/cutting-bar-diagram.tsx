@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import { Badge } from "@/components/ui/badge";
 import type { BarLayout } from "@/lib/cutting";
 import { cumulativePositionsMm, segmentBoundariesMm } from "@/lib/cutting";
@@ -15,12 +16,34 @@ const PALETTE = [
   "oklch(0.65 0.15 140)",
 ];
 
+/** Не показывать подписи кумулята, если по ширине бара они слиплись бы (доля длины заготовки). */
+function filterCumulativeLabels(
+  values: number[],
+  stockLengthMm: number,
+  minGapFrac: number
+): number[] {
+  if (stockLengthMm <= 0 || values.length === 0) return [];
+  const sorted = [...new Set(values)].sort((a, b) => a - b);
+  const out: number[] = [];
+  let lastFrac = -Infinity;
+  for (const v of sorted) {
+    const f = v / stockLengthMm;
+    if (out.length === 0 || f - lastFrac >= minGapFrac) {
+      out.push(v);
+      lastFrac = f;
+    }
+  }
+  const lastVal = sorted[sorted.length - 1];
+  if (lastVal != null && out[out.length - 1] !== lastVal) {
+    out.push(lastVal);
+  }
+  return [...new Set(out)].sort((a, b) => a - b);
+}
+
 type Props = {
   bar: BarLayout;
   kerfMm: number;
-  /** с 1, для подписи «№» */
   displayIndex: number;
-  /** одинаковых схем подряд */
   repeat?: number;
 };
 
@@ -31,77 +54,16 @@ export function CuttingBarDiagram({
   repeat = 1,
 }: Props) {
   const stockLengthMm = bar.stockLengthMm;
-  const W = 100;
-  const H = 22;
   const boundaries = segmentBoundariesMm(bar, kerfMm);
   const cum = cumulativePositionsMm(bar, kerfMm);
-
-  let posMm = 0;
-  const rects: React.ReactNode[] = [];
-  bar.pieces.forEach((p, i) => {
-    const fill = PALETTE[p.colorIndex % PALETTE.length];
-    rects.push(
-      <rect
-        key={`${displayIndex}-${i}-${p.demandId}`}
-        x={(posMm * W) / stockLengthMm}
-        y={4}
-        width={(p.lengthMm * W) / stockLengthMm}
-        height={12}
-        fill={fill}
-        stroke="var(--border)"
-        strokeWidth={0.2}
-        rx={1}
-      />
-    );
-    const cx = posMm + p.lengthMm / 2;
-    const label = `${p.lengthMm} мм`;
-    rects.push(
-      <text
-        key={`t-${displayIndex}-${i}`}
-        x={(cx * W) / stockLengthMm}
-        y={12}
-        textAnchor="middle"
-        className="fill-foreground"
-        style={{ fontSize: "5px", fontWeight: 600 }}
-      >
-        {label}
-      </text>
-    );
-    posMm += p.lengthMm;
-    if (i < bar.pieces.length - 1) posMm += kerfMm;
-  });
-
-  const cutLines = boundaries.map((posMmLine, idx) => (
-    <line
-      key={`cut-${idx}`}
-      x1={(posMmLine * W) / stockLengthMm}
-      y1={2}
-      x2={(posMmLine * W) / stockLengthMm}
-      y2={H - 2}
-      stroke="var(--foreground)"
-      strokeWidth={0.6}
-      strokeDasharray="2 1"
-      opacity={0.75}
-    />
-  ));
-
-  const cumLabels = cum.map((mm, idx) => (
-    <text
-      key={`cum-${idx}`}
-      x={(mm * W) / stockLengthMm}
-      y={20}
-      textAnchor="middle"
-      className="fill-muted-foreground"
-      style={{ fontSize: "4.5px" }}
-    >
-      {mm} мм
-    </text>
-  ));
+  const wasteMm = Math.max(0, bar.wasteMm);
 
   const rangeLabel =
     repeat > 1
       ? `№ ${displayIndex}–${displayIndex + repeat - 1}`
       : `№ ${displayIndex}`;
+
+  const cumShown = filterCumulativeLabels(cum, stockLengthMm, 0.045);
 
   return (
     <div className="border-border/60 bg-card/30 w-full rounded-lg border px-3 py-2">
@@ -110,33 +72,112 @@ export function CuttingBarDiagram({
           {repeat}×
         </Badge>
         <span className="text-foreground font-medium tabular-nums">{rangeLabel}</span>
-        <span className="tabular-nums">
-          {stockLengthMm} мм
-        </span>
+        <span className="tabular-nums">{stockLengthMm} мм</span>
         <span className="ml-auto tabular-nums">
-          ост. {bar.wasteMm.toFixed(0)} · занято {bar.usedMm.toFixed(0)} мм
+          ост. {bar.wasteMm.toFixed(0)} мм · занято {bar.usedMm.toFixed(0)} мм
         </span>
       </div>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="bg-muted/30 w-full max-h-[72px] rounded border"
-        preserveAspectRatio="none"
-        aria-label={`Схема раскроя ${rangeLabel}`}
-      >
-        <rect
-          x={0}
-          y={2}
-          width={W}
-          height={16}
-          fill="var(--muted)"
-          stroke="var(--border)"
-          strokeWidth={0.25}
-          rx={2}
-        />
-        {rects}
-        {cutLines}
-        {cumLabels}
-      </svg>
+
+      <div className="relative w-full">
+        {/* Линии реза: тонкий красный пунктир, чуть выступают за полосу */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-start"
+          style={{ height: 36 }}
+          aria-hidden
+        >
+          {boundaries.map((mm, idx) => (
+            <div
+              key={`cut-${idx}`}
+              className="absolute border-l border-dashed border-red-500"
+              style={{
+                left: `${(mm / stockLengthMm) * 100}%`,
+                top: -3,
+                height: 38,
+                width: 0,
+                borderLeftWidth: 1,
+              }}
+            />
+          ))}
+        </div>
+
+        <div className="bg-muted/40 flex h-8 w-full min-w-0 overflow-hidden rounded-lg border border-border shadow-sm">
+          {bar.pieces.map((p, i) => {
+            const isFirst = i === 0;
+            const isLast = i === bar.pieces.length - 1 && wasteMm <= 0;
+            const isNarrow = p.lengthMm / stockLengthMm < 0.06;
+            const roundedL = isFirst ? "rounded-l-lg" : "";
+            const roundedR = isLast ? "rounded-r-lg" : "";
+            return (
+              <Fragment key={`${displayIndex}-seg-${i}`}>
+                <div
+                  className={`flex min-h-0 min-w-0 items-center justify-center px-0.5 text-center ${roundedL} ${roundedR}`}
+                  style={{
+                    flex: `${p.lengthMm} 1 0%`,
+                    background: PALETTE[p.colorIndex % PALETTE.length],
+                    minWidth: 2,
+                  }}
+                  title={`${p.label}: ${p.lengthMm} мм`}
+                >
+                  {!isNarrow && (
+                    <span className="text-[10px] leading-tight font-medium text-white tabular-nums [text-shadow:0_0_2px_rgba(0,0,0,0.65)]">
+                      {p.lengthMm} мм
+                    </span>
+                  )}
+                </div>
+                {i < bar.pieces.length - 1 && (
+                  <div
+                    className="shrink-0 bg-muted/80"
+                    style={{
+                      flex: `${kerfMm} 1 0%`,
+                      minWidth: 2,
+                    }}
+                    aria-hidden
+                  />
+                )}
+              </Fragment>
+            );
+          })}
+          {wasteMm > 0 && (
+            <div
+              className="min-h-0 min-w-0 rounded-r-lg"
+              style={{
+                flex: `${wasteMm} 1 0%`,
+                minWidth: 2,
+                backgroundColor: "color-mix(in oklab, var(--muted) 85%, transparent)",
+                backgroundImage: `repeating-linear-gradient(
+                  -45deg,
+                  transparent,
+                  transparent 4px,
+                  color-mix(in oklab, var(--foreground) 22%, transparent) 4px,
+                  color-mix(in oklab, var(--foreground) 22%, transparent) 5px
+                )`,
+              }}
+              title={`Остаток: ${wasteMm.toFixed(0)} мм`}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Кумулятив: HTML, без растягивания шрифта; разрежение при наложении */}
+      <div className="relative mt-1 h-5 w-full">
+        {cumShown.map((mm) => (
+          <span
+            key={`cum-${mm}`}
+            className="text-muted-foreground absolute text-[9px] tabular-nums"
+            style={{
+              left: `${(mm / stockLengthMm) * 100}%`,
+              transform: "translateX(-50%)",
+              maxWidth: "42%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {mm} мм
+          </span>
+        ))}
+      </div>
+
       <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
         {bar.pieces.map((p, i) => (
           <li key={`${displayIndex}-leg-${i}`} className="flex items-center gap-1">
@@ -152,8 +193,8 @@ export function CuttingBarDiagram({
         ))}
       </ul>
       <p className="text-muted-foreground mt-1 text-[10px] leading-tight">
-        Пунктир — рез между деталями, пропил {kerfMm} мм · внизу на шкале —
-        накопленная длина, мм
+        Красный пунктир — граница реза между деталями (пропил {kerfMm} мм). Штриховка
+        — остаток заготовки. Внизу — накопленная длина от начала, мм.
       </p>
     </div>
   );
