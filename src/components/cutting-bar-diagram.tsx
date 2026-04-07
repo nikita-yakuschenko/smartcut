@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
+import { IBM_Plex_Sans } from "next/font/google";
 import { Badge } from "@/components/ui/badge";
 import type { BarLayout, PlacedPiece } from "@/lib/cutting";
 
@@ -14,6 +15,11 @@ const PALETTE = [
   "oklch(0.6 0.18 200)",
   "oklch(0.65 0.15 140)",
 ];
+
+const ibmPlex = IBM_Plex_Sans({
+  subsets: ["latin", "cyrillic"],
+  weight: ["400", "500", "600"],
+});
 
 function aggregatePiecesForLegend(pieces: PlacedPiece[]) {
   const map = new Map<
@@ -220,8 +226,9 @@ export function CuttingBarDiagram({
         </span>
       </div>
 
-      <div className="my-1.5 flex h-9 w-full min-w-0 items-stretch overflow-visible rounded-sm border border-border bg-muted/35 p-px shadow-sm">
-        {bar.pieces.map((p, i) => {
+      <div className={ibmPlex.className}>
+        <div className="my-1.5 flex h-9 w-full min-w-0 items-stretch overflow-visible rounded-sm border border-border bg-muted/35 p-px shadow-sm">
+          {bar.pieces.map((p, i) => {
           const isFirst = i === 0;
           const isLastPiece = i === bar.pieces.length - 1;
           const showValue = canShowPieceValue(p.lengthMm, stockLengthMm);
@@ -229,8 +236,8 @@ export function CuttingBarDiagram({
           const roundR =
             isLastPiece && wasteMm <= 0 ? "rounded-r-[3px]" : "";
 
-          return (
-            <Fragment key={`${displayIndex}-seg-${i}`}>
+            return (
+              <Fragment key={`${displayIndex}-seg-${i}`}>
               <div
                 className={`border-border/80 flex min-h-0 min-w-0 flex-col overflow-hidden border bg-background/40 ${roundL} ${roundR}`}
                 style={{ flex: `${p.lengthMm} 1 0%`, minWidth: 2 }}
@@ -248,42 +255,43 @@ export function CuttingBarDiagram({
                 </div>
               </div>
               {i < bar.pieces.length - 1 && <KerfSlot kerfMm={kerfMm} />}
-            </Fragment>
-          );
-        })}
-        {wasteMm > 0 && bar.pieces.length > 0 && <KerfSlot kerfMm={kerfMm} />}
-        {wasteMm > 0 && (
-          <div
-            className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-r-[3px] border border-dashed border-muted-foreground/30 bg-background/30"
-            style={{
-              flex: `${wasteMm} 1 0%`,
-              minWidth: 2,
-              backgroundImage: `repeating-linear-gradient(
+              </Fragment>
+            );
+          })}
+          {wasteMm > 0 && bar.pieces.length > 0 && <KerfSlot kerfMm={kerfMm} />}
+          {wasteMm > 0 && (
+            <div
+              className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-r-[3px] border border-dashed border-muted-foreground/30 bg-background/30"
+              style={{
+                flex: `${wasteMm} 1 0%`,
+                minWidth: 2,
+                backgroundImage: `repeating-linear-gradient(
                 -45deg,
                 transparent,
                 transparent 4px,
                 color-mix(in oklab, var(--foreground) 20%, transparent) 4px,
                 color-mix(in oklab, var(--foreground) 20%, transparent) 5px
               )`,
-            }}
-            title={`Остаток: ${wasteMm.toFixed(0)} мм`}
-          />
-        )}
-      </div>
+              }}
+              title={`Остаток: ${wasteMm.toFixed(0)} мм`}
+            />
+          )}
+        </div>
 
-      {/* Выноски: число, красная линия, стрелка; близкие — на разной высоте */}
-      <div
-        className="relative mt-0 w-full"
-        style={{ minHeight: 42 + LEADER_LANE_OFFSET_PX }}
-      >
-        {leaders.map((L, idx) => (
-          <DimensionLeader
-            key={`${displayIndex}-ld-${idx}-${L.centerMm}`}
-            valueRounded={Math.round(L.valueMm)}
-            leftPct={(L.centerMm / stockLengthMm) * 100}
-            lane={L.lane}
-          />
-        ))}
+        {/* Выноски: число, красная линия, стрелка; близкие — на разной высоте */}
+        <div
+          className="relative mt-0 w-full"
+          style={{ minHeight: 42 + LEADER_LANE_OFFSET_PX }}
+        >
+          {leaders.map((L, idx) => (
+            <DimensionLeader
+              key={`${displayIndex}-ld-${idx}-${L.centerMm}`}
+              valueRounded={Math.round(L.valueMm)}
+              leftPct={(L.centerMm / stockLengthMm) * 100}
+              lane={L.lane}
+            />
+          ))}
+        </div>
       </div>
 
       <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
